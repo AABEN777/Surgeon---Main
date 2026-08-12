@@ -35,6 +35,8 @@ def show_market(m):
     print(f"  txns5m:  {m.buys_5m} buys / {m.sells_5m} sells")
     print(f"  age:     {m.age_hours:.2f}h    dex: {m.dex}"
           f"{'   launchpad: ' + m.launchpad if m.launchpad else ''}")
+    issues = m.sanity_issues
+    print(f"  data:    {'TRUSTWORTHY' if not issues else 'SUSPECT — ' + ', '.join(issues)}")
     return True
 
 

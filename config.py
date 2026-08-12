@@ -156,6 +156,11 @@ SAFETY = {
     "reject_on_mint_auth":  True,
     "reject_on_freeze":     True,
     "reject_creator_rug_history": True,
+    # SKYAI on BSC passed with 1 holder and the creator holding 100% of supply,
+    # because top_holder_pct was unavailable and nothing else was checked.
+    "max_creator_holds_pct": 20.0,
+    "min_holder_count":      10,
+    "reject_unverified_contract_if_thin": True,   # unverified + <50 holders
     # If safety data can't be fetched, do we still alert?
     # True = alert but clearly label the gap. Never silently show 0%.
     "alert_on_partial":     True,
@@ -163,6 +168,17 @@ SAFETY = {
     # "flag"  = still alert, label it loudly, heavy conviction penalty
     # "block" = never alert
     "unverified_policy":    "flag",
+}
+
+# ── MARKET DATA SANITY ────────────────────────────────────────────
+# Fresh pairs routinely report garbage: infinite-looking price changes,
+# billion-dollar FDV sitting on $16k of liquidity. Treat these as bad data,
+# not as signals.
+SANITY = {
+    "max_fdv_liq_ratio":  500,      # FDV more than 500x liquidity = fake supply
+    "max_abs_change_pct": 50_000,   # anything beyond this is a data artefact
+    "min_liquidity_usd":  1_000,    # below this nothing is tradeable
+    "unknown_age_hours":  999.0,    # sentinel used when pairCreatedAt is absent
 }
 
 # ── MARKET HOURS (UTC) ────────────────────────────────────────────

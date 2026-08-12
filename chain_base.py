@@ -65,6 +65,14 @@ class TokenMarket:
     def vol_fdv_ratio(self) -> float:
         return (self.volume_24h / self.fdv) if self.fdv > 0 else 0.0
 
+    @property
+    def sanity_issues(self) -> list[str]:
+        return market_sanity(self)
+
+    @property
+    def trustworthy(self) -> bool:
+        return not self.sanity_issues
+
     def as_dict(self) -> dict:
         return asdict(self)
 
@@ -375,6 +383,33 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
     )
 
 
+def market_sanity(m: "TokenMarket") -> list[str]:
+    """
+    Reasons this market snapshot should not be trusted.
+
+    A pair minutes old often reports nonsense. Scoring garbage as if it were
+    momentum is how a 1-holder contract ends up looking like a 1700%-in-5min
+    breakout.
+    """
+    s = config.SANITY
+    bad = []
+    if m.age_hours >= s["unknown_age_hours"]:
+        bad.append("age_unknown")
+    if m.liquidity_usd < s["min_liquidity_usd"]:
+        bad.append(f"liquidity_${m.liquidity_usd:,.0f}")
+    if m.liquidity_usd > 0 and m.fdv > 0:
+        ratio = m.fdv / m.liquidity_usd
+        if ratio > s["max_fdv_liq_ratio"]:
+            bad.append(f"fdv_{ratio:,.0f}x_liquidity")
+    for label, val in (("5m", m.change_5m), ("1h", m.change_1h),
+                       ("24h", m.change_24h)):
+        if abs(val) > s["max_abs_change_pct"]:
+            bad.append(f"change_{label}_implausible")
+    if not m.dex or m.dex == "unknown":
+        bad.append("dex_unknown")
+    return bad
+
+
 def detect_launchpad(ca: str, pair: dict) -> Optional[str]:
     dex = (pair.get("dexId") or "").lower()
     labels = " ".join(str(x).lower() for x in (pair.get("labels") or []))
@@ -437,6 +472,30 @@ class ChainAdapter(ABC):
 
     def market(self, ca: str) -> TokenMarket:
         return dexscreener_market(ca, self.key, self.chain_id)
+
+    @staticmethod
+    def apply_common_gates(rep: SafetyReport) -> SafetyReport:
+        """
+        Chain-independent rejects that run after every adapter's own checks.
+        These exist because a missing top_holder_pct used to mean no holder
+        check happened at all.
+        """
+        s = config.SAFETY
+
+        if (rep.creator_holds_pct is not None
+                and rep.creator_holds_pct > s["max_creator_holds_pct"]):
+            rep.hard_rejects.append(f"creator_holds_{rep.creator_holds_pct:.0f}pct")
+
+        if (rep.holder_count is not None
+                and rep.holder_count < s["min_holder_count"]):
+            rep.hard_rejects.append(f"only_{rep.holder_count}_holders")
+
+        if (s["reject_unverified_contract_if_thin"]
+                and "unverified_contract" in rep.flags
+                and (rep.holder_count is None or rep.holder_count < 50)):
+            rep.hard_rejects.append("unverified_contract_thin_holders")
+
+        return rep
 
     @abstractmethod
     def safety(self, ca: str) -> SafetyReport:

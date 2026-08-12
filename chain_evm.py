@@ -56,7 +56,7 @@ class EvmAdapter(ChainAdapter):
             if getattr(rep, f) is None and f not in rep.unavailable:
                 rep.unavailable.append(f)
 
-        return rep
+        return self.apply_common_gates(rep)
 
     # -- GoPlus ---------------------------------------------------
     def _apply_goplus(self, rep: SafetyReport, ca_l: str) -> bool:

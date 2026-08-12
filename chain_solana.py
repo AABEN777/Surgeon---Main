@@ -138,7 +138,7 @@ class SolanaAdapter(ChainAdapter):
         else:
             rep.unavailable.append("creator")
 
-        return rep
+        return self.apply_common_gates(rep)
 
     # ── CREATOR ACTIVITY ──────────────────────────────────────────
     def creator_activity(self, ca: str, creator: Optional[str] = None) -> CreatorActivity:
