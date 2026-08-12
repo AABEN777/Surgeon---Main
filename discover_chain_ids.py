@@ -15,6 +15,7 @@ from chain_base import http_get
 
 DEX_BASE = "https://api.dexscreener.com"
 GOPLUS_CHAINS = "https://api.gopluslabs.io/api/v1/supported_chains"
+GT_NETWORKS = "https://api.geckoterminal.com/api/v2/networks"
 
 WANTED = ["solana", "robinhood", "base", "bsc", "monad"]
 
@@ -43,6 +44,19 @@ def goplus_chains() -> list[dict]:
     if not data or data.get("code") != 1:
         return []
     return data.get("result") or []
+
+
+def geckoterminal_networks() -> list[tuple[str, str]]:
+    """Every network id GeckoTerminal exposes, paginated."""
+    out = []
+    for page in range(1, 6):
+        data = http_get(f"{GT_NETWORKS}?page={page}")
+        rows = (data or {}).get("data") or []
+        if not rows:
+            break
+        for n in rows:
+            out.append((n.get("id", ""), (n.get("attributes") or {}).get("name", "")))
+    return out
 
 
 def main() -> int:
@@ -78,7 +92,19 @@ def main() -> int:
                                           "bnb", "solana"))
             print(f"  {cid:<12} {c.get('name')}{'   <-- wanted' if hit else ''}")
 
-    print("\n[3] Paste into config.CHAINS")
+    print("\n[3] GeckoTerminal networks (new-pool discovery source)")
+    print("-" * 60)
+    nets = geckoterminal_networks()
+    if not nets:
+        print("  !! no data — GeckoTerminal unreachable")
+    else:
+        print(f"  {len(nets)} networks available. Matches for our chains:")
+        for want in WANTED:
+            hits = [f"{i} ({n})" for i, n in nets
+                    if want in i.lower() or want in n.lower()]
+            print(f"    {want:<12} {', '.join(hits) if hits else 'NO MATCH'}")
+
+    print("\n[4] Paste into config.CHAINS")
     print("-" * 60)
     lookup = {str(c.get("name", "")).lower(): c.get("id") for c in chains}
     for want in WANTED:

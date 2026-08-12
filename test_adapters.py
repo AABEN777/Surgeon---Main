@@ -56,10 +56,9 @@ def show_safety(s):
     print(f"  creator: {s.creator or 'unknown'}")
     if s.flags:
         print(f"  flags:   {', '.join(s.flags[:6])}")
+    print(f"  verdict: {s.verdict}")
     if s.hard_rejects:
-        print(f"  REJECT:  {', '.join(s.hard_rejects)}")
-    else:
-        print("  verdict: PASS")
+        print(f"  reasons: {', '.join(s.hard_rejects)}")
     print(f"  display: {s.display()}")
 
 
@@ -69,8 +68,13 @@ def test_chain(key: str) -> bool:
     print(f"{ad.display}  [{key}]")
     line("=")
 
+    try:
+        bd = ad.discover_breakdown()
+        print(f"  discovered: geckoterminal={bd['geckoterminal']}  "
+              f"dexscreener={bd['dexscreener']}  merged={bd['merged']}")
+    except Exception as e:
+        print(f"  discovery breakdown failed: {e}")
     cas = ad.discover()
-    print(f"  discovered: {len(cas)} candidates")
     if not cas:
         print("  -> nothing to test (chain may have no promoted tokens now)")
         return False

@@ -105,8 +105,24 @@ class SafetyReport:
         return bool(self.unavailable)
 
     @property
+    def verified(self) -> bool:
+        """Did any safety source actually answer?"""
+        return bool(self.sources)
+
+    @property
+    def verdict(self) -> str:
+        """REJECT | UNVERIFIED | PASS_PARTIAL | PASS"""
+        if self.hard_rejects:
+            return "REJECT"
+        if not self.sources:
+            return "UNVERIFIED"
+        return "PASS_PARTIAL" if self.partial else "PASS"
+
+    @property
     def passed(self) -> bool:
-        return not self.hard_rejects
+        # An unanswered safety check is not a pass. v1 treated silence as
+        # consent and that is how clean-looking rugs got through.
+        return self.verdict in ("PASS", "PASS_PARTIAL")
 
     def display(self) -> str:
         """One-line summary for alerts. Never invents a number."""
@@ -126,16 +142,20 @@ class SafetyReport:
             s = self.sell_tax_pct if self.sell_tax_pct is not None else 0
             if b or s:
                 bits.append(f"Tax {b:g}/{s:g}%")
+        if not self.sources:
+            return "UNVERIFIED — no safety source could answer"
         if not bits:
-            return "Safety data unavailable"
+            return "UNVERIFIED — safety data unavailable"
         out = " · ".join(bits)
         if self.partial:
-            out += f"  (partial — {', '.join(self.sources) or 'no source'})"
+            out += f"  (partial — {', '.join(self.sources)})"
         return out
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["partial"] = self.partial
+        d["verified"] = self.verified
+        d["verdict"] = self.verdict
         d["passed"] = self.passed
         return d
 
@@ -208,10 +228,43 @@ def safe_int(v, default=0) -> int:
 DEX_BASE = "https://api.dexscreener.com"
 
 
+GT_BASE = "https://api.geckoterminal.com/api/v2"
+
+
+def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
+    """
+    Newest and trending pools for a network, via GeckoTerminal.
+
+    DexScreener's profile/boost feeds only surface tokens whose devs paid to
+    promote them — that is 49 candidates on Solana but 2 on Base. This is the
+    real new-pair firehose: free, no key, ~30 req/min.
+    """
+    if not network:
+        return []
+    found, seen = [], set()
+    urls = [f"{GT_BASE}/networks/{network}/new_pools"]
+    urls += [f"{GT_BASE}/networks/{network}/new_pools?page={p}" for p in range(2, pages + 1)]
+    urls.append(f"{GT_BASE}/networks/{network}/trending_pools")
+
+    for url in urls:
+        data = http_get(url)
+        if not isinstance(data, dict):
+            continue
+        for pool in (data.get("data") or []):
+            rel = ((pool.get("relationships") or {}).get("base_token") or {}).get("data") or {}
+            token_id = rel.get("id") or ""
+            # ids look like "base_0xabc..." / "solana_9xQ..."
+            ca = token_id.split("_", 1)[1] if "_" in token_id else token_id
+            if ca and ca not in seen:
+                seen.add(ca)
+                found.append(ca)
+    return found
+
+
 def dexscreener_discover(chain_id: str) -> list[str]:
     """
     Candidate CAs for a chain from DexScreener's public discovery feeds.
-    Deduped, order preserved (freshest profile first).
+    Promoted tokens only — thin on newer chains. Use alongside GeckoTerminal.
     """
     found, seen = [], set()
     endpoints = [
@@ -326,7 +379,25 @@ class ChainAdapter(ABC):
 
     # -- data -----------------------------------------------------
     def discover(self) -> list[str]:
-        return dexscreener_discover(self.chain_id)
+        """
+        New pools first (GeckoTerminal), then promoted tokens (DexScreener).
+        Deduped, order preserved — freshest launches lead.
+        """
+        out, seen = [], set()
+        for src in (geckoterminal_discover(self.cfg.get("geckoterminal_id")),
+                    dexscreener_discover(self.chain_id)):
+            for ca in src:
+                if ca not in seen:
+                    seen.add(ca)
+                    out.append(ca)
+        return out
+
+    def discover_breakdown(self) -> dict:
+        """Per-source counts — used by the verify workflow."""
+        gt = geckoterminal_discover(self.cfg.get("geckoterminal_id"))
+        ds = dexscreener_discover(self.chain_id)
+        return {"geckoterminal": len(gt), "dexscreener": len(ds),
+                "merged": len(set(gt) | set(ds))}
 
     def market(self, ca: str) -> TokenMarket:
         return dexscreener_market(ca, self.key, self.chain_id)

@@ -32,6 +32,7 @@ CHAINS = {
         "display":         "Solana",
         "kind":            "svm",
         "dexscreener_id":  "solana",
+        "geckoterminal_id": "solana",
         "enabled":         True,
         "explorer":        "https://solscan.io/token/{ca}",
         "chart":           "https://dexscreener.com/solana/{ca}",
@@ -41,8 +42,9 @@ CHAINS = {
     "robinhood": {
         "display":         "Robinhood Chain",
         "kind":            "evm",
-        "dexscreener_id":  "robinhood",     # VERIFY
-        "goplus_chain_id": None,            # VERIFY — GoPlus added support 2026-07-15
+        "dexscreener_id":  "robinhood",     # resolved
+        "geckoterminal_id": "robinhood",    # VERIFY
+        "goplus_chain_id": "4663",          # resolved
         "blockscout":      None,            # VERIFY — fallback for holder distribution
         "enabled":         True,
         "explorer":        "https://explorer.robinhood.com/token/{ca}",  # VERIFY
@@ -54,6 +56,7 @@ CHAINS = {
         "display":         "Base",
         "kind":            "evm",
         "dexscreener_id":  "base",
+        "geckoterminal_id": "base",
         "goplus_chain_id": "8453",
         "blockscout":      "https://base.blockscout.com",
         "enabled":         True,
@@ -66,6 +69,7 @@ CHAINS = {
         "display":         "BNB Chain",
         "kind":            "evm",
         "dexscreener_id":  "bsc",
+        "geckoterminal_id": "bsc",
         "goplus_chain_id": "56",
         "blockscout":      None,
         "enabled":         True,
@@ -78,7 +82,8 @@ CHAINS = {
         "display":         "Monad",
         "kind":            "evm",
         "dexscreener_id":  "monad",         # VERIFY
-        "goplus_chain_id": None,            # VERIFY — may not be supported yet
+        "geckoterminal_id": "monad",        # VERIFY
+        "goplus_chain_id": "143",           # resolved
         "blockscout":      None,            # VERIFY
         "enabled":         True,
         "explorer":        "https://monadexplorer.com/token/{ca}",  # VERIFY
@@ -154,6 +159,10 @@ SAFETY = {
     # If safety data can't be fetched, do we still alert?
     # True = alert but clearly label the gap. Never silently show 0%.
     "alert_on_partial":     True,
+    # A token no safety source could answer for is UNVERIFIED, not PASS.
+    # "flag"  = still alert, label it loudly, heavy conviction penalty
+    # "block" = never alert
+    "unverified_policy":    "flag",
 }
 
 # ── MARKET HOURS (UTC) ────────────────────────────────────────────
@@ -178,6 +187,8 @@ CONVICTION = {
     "liquidity":  [(20_000, 10), (15_000, 5)],
     "social":     {3: 20, 2: 12, 1: 5},                  # unique channels
     "smart_money":{2: 20, 1: 12},                        # unique wallets
+    "unverified": -25,
+    "partial_safety": -8,
     "macro":      {"BULLISH": 5, "NEUTRAL": 0, "CAUTION": -10, "PAUSE": -10},
     "min_to_alert": 30,
     "bands": {"HIGH": 80, "GOOD": 60, "WATCH": 30},
