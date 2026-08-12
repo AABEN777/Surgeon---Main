@@ -79,9 +79,21 @@ def test_chain(key: str) -> bool:
         print("  -> nothing to test (chain may have no promoted tokens now)")
         return False
 
-    for ca in cas[:3]:
+    # Prefer a young token — that is what Surgeon actually hunts. Scanning a
+    # 74-day-old $15m coin tells us nothing about early-detection quality.
+    picked = None
+    for ca in cas[:8]:
         m = ad.market(ca)
-        if m.ok and m.liquidity_usd > 0:
+        if not (m.ok and m.liquidity_usd > 0):
+            continue
+        if picked is None or m.age_hours < picked[1].age_hours:
+            picked = (ca, m)
+        if m.age_hours < 6:
+            break
+
+    if picked:
+        ca, m = picked
+        if True:
             print(f"\n  testing {ca}")
             line()
             show_market(m)

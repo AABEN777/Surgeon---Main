@@ -43,11 +43,11 @@ CHAINS = {
         "display":         "Robinhood Chain",
         "kind":            "evm",
         "dexscreener_id":  "robinhood",     # resolved
-        "geckoterminal_id": "robinhood",    # VERIFY
+        "geckoterminal_id": "robinhood",    # resolved
         "goplus_chain_id": "4663",          # resolved
-        "blockscout":      None,            # VERIFY — fallback for holder distribution
+        "blockscout":      "https://robinhoodchain.blockscout.com",  # official explorer
         "enabled":         True,
-        "explorer":        "https://explorer.robinhood.com/token/{ca}",  # VERIFY
+        "explorer":        "https://explorer.robinhood.com/token/{ca}",
         "chart":           "https://dexscreener.com/robinhood/{ca}",
         "native":          "ETH",
         "addr_regex":      r"^0x[a-fA-F0-9]{40}$",
@@ -81,12 +81,12 @@ CHAINS = {
     "monad": {
         "display":         "Monad",
         "kind":            "evm",
-        "dexscreener_id":  "monad",         # VERIFY
-        "geckoterminal_id": "monad",        # VERIFY
+        "dexscreener_id":  "monad",         # resolved via geckoterminal
+        "geckoterminal_id": "monad",        # resolved
         "goplus_chain_id": "143",           # resolved
-        "blockscout":      None,            # VERIFY
+        "blockscout":      None,
         "enabled":         True,
-        "explorer":        "https://monadexplorer.com/token/{ca}",  # VERIFY
+        "explorer":        "https://monadexplorer.com/token/{ca}",
         "chart":           "https://dexscreener.com/monad/{ca}",
         "native":          "MON",
         "addr_regex":      r"^0x[a-fA-F0-9]{40}$",

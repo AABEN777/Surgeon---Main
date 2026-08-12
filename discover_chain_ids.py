@@ -49,7 +49,7 @@ def goplus_chains() -> list[dict]:
 def geckoterminal_networks() -> list[tuple[str, str]]:
     """Every network id GeckoTerminal exposes, paginated."""
     out = []
-    for page in range(1, 6):
+    for page in range(1, 4):   # 250 networks fit in 3 pages
         data = http_get(f"{GT_NETWORKS}?page={page}")
         rows = (data or {}).get("data") or []
         if not rows:

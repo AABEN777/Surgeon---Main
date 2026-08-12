@@ -178,6 +178,26 @@ _session = requests.Session()
 _session.headers.update({"User-Agent": config.USER_AGENT})
 
 
+class _Throttle:
+    """Minimum spacing between calls to one host. GeckoTerminal's free tier
+    is ~30 req/min and answers 429 the moment you exceed it."""
+
+    def __init__(self, min_interval: float):
+        self.min_interval = min_interval
+        self._last = 0.0
+
+    def wait(self):
+        gap = time.monotonic() - self._last
+        if gap < self.min_interval:
+            time.sleep(self.min_interval - gap)
+        self._last = time.monotonic()
+
+
+_GT_THROTTLE = _Throttle(2.2)          # ~27 req/min, comfortably inside 30
+_DISCOVERY_CACHE: dict = {}            # (source, network) -> (ts, result)
+_DISCOVERY_TTL = 90                    # seconds
+
+
 def http_get(url: str, params: dict | None = None,
              timeout: int | None = None, retries: int | None = None):
     """GET with retry/backoff. Returns parsed JSON or None. Never raises."""
@@ -190,7 +210,7 @@ def http_get(url: str, params: dict | None = None,
             if r.status_code == 200:
                 return r.json()
             if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
-                time.sleep(delay)
+                time.sleep(delay * (4 if r.status_code == 429 else 1))
                 delay *= config.HTTP_BACKOFF
                 continue
             log.warning("GET %s -> HTTP %s", url, r.status_code)
@@ -241,12 +261,19 @@ def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
     """
     if not network:
         return []
+
+    key = ("gt", network, pages)
+    hit = _DISCOVERY_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _DISCOVERY_TTL:
+        return hit[1]
+
     found, seen = [], set()
     urls = [f"{GT_BASE}/networks/{network}/new_pools"]
     urls += [f"{GT_BASE}/networks/{network}/new_pools?page={p}" for p in range(2, pages + 1)]
     urls.append(f"{GT_BASE}/networks/{network}/trending_pools")
 
     for url in urls:
+        _GT_THROTTLE.wait()
         data = http_get(url)
         if not isinstance(data, dict):
             continue
@@ -258,6 +285,8 @@ def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
             if ca and ca not in seen:
                 seen.add(ca)
                 found.append(ca)
+
+    _DISCOVERY_CACHE[key] = (time.time(), found)
     return found
 
 
@@ -266,6 +295,11 @@ def dexscreener_discover(chain_id: str) -> list[str]:
     Candidate CAs for a chain from DexScreener's public discovery feeds.
     Promoted tokens only — thin on newer chains. Use alongside GeckoTerminal.
     """
+    key = ("ds", chain_id)
+    hit = _DISCOVERY_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < _DISCOVERY_TTL:
+        return hit[1]
+
     found, seen = [], set()
     endpoints = [
         f"{DEX_BASE}/token-profiles/latest/v1",
@@ -285,6 +319,8 @@ def dexscreener_discover(chain_id: str) -> list[str]:
             if ca and ca not in seen:
                 seen.add(ca)
                 found.append(ca)
+
+    _DISCOVERY_CACHE[key] = (time.time(), found)
     return found
 
 
