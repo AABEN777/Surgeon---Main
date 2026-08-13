@@ -90,6 +90,42 @@ STRONG_SAFETY = SafetyReport(
     mint_authority=False, freeze_authority=False, risk_raw=1.0)
 
 
+# ── alert layer ───────────────────────────────────────────────────
+
+def test_alerts():
+    import alerts, chains, dataclasses
+    print("\nalert layer")
+    check("escapes ampersand", alerts.esc("Test & Token"), "Test &amp; Token")
+    check("escapes angle brackets", alerts.esc("<b>x</b>"), "&lt;b&gt;x&lt;/b&gt;")
+    check("leaves markdown chars alone", alerts.esc("__x__ *y* `z`"), "__x__ *y* `z`")
+
+    rh = chains.get_adapter("robinhood")
+    ev = scoring.evaluate(dataclasses.replace(REDDIT, age_hours=0.20),
+                          REDDIT_SAFETY, "robinhood")
+    msg = alerts.format_signal(ev, rh)
+    check_true("CA wrapped in <code>", f"<code>{REDDIT.ca}</code>" in msg)
+    check_true("states the unchecked fields", "Unchecked:" in msg)
+    check_true("shows conviction breakdown", "momentum:EXPLOSIVE" in msg)
+    check_true("labels signal-only", "SIGNAL ONLY" in msg)
+    check_true("within telegram limit", len(msg) < alerts.MAX_LEN)
+
+    bare = SafetyReport(ca=REDDIT.ca, chain="robinhood")
+    unv = alerts.format_signal(
+        scoring.evaluate(dataclasses.replace(REDDIT, age_hours=0.20), bare, "robinhood"), rh)
+    check_true("unverified is stated loudly", "treat as unverified" in unv)
+
+    ca = "DedupeTest"
+    first = alerts.should_send(ca)
+    alerts.mark_sent(ca)
+    check_true("first send allowed", first)
+    check_true("repeat blocked inside cooldown", not alerts.should_send(ca))
+    check_true("allowed once cooldown elapses",
+               alerts.should_send(ca, cooldown_minutes=0))
+
+    check("no credentials fails cleanly",
+          alerts.send("x").ok if config.TELEGRAM_BOT_TOKEN else False, False)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -155,6 +191,8 @@ def main():
     print(f"  breakdown: {ev_reddit.conviction.explain()}")
     if ev_reddit.rejected_by == "tier":
         print(f"  tier misses: {ev_reddit.tier.failures.get('first_moon')}")
+
+    test_alerts()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
