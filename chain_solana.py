@@ -32,7 +32,7 @@ class SolanaAdapter(ChainAdapter):
         super().__init__("solana")
 
     # ── SAFETY ────────────────────────────────────────────────────
-    def safety(self, ca: str) -> SafetyReport:
+    def safety(self, ca: str, pair_address: str | None = None) -> SafetyReport:
         rep = SafetyReport(ca=ca, chain=self.key)
         data = http_get(RUGCHECK.format(ca=ca), timeout=15)
 

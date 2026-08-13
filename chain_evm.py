@@ -20,16 +20,11 @@ import config
 from chain_base import (
     ChainAdapter, SafetyReport, CreatorActivity,
     http_get, safe_float, safe_int,
+    BURN_ADDRESSES, is_infrastructure_holder,
 )
 
 GOPLUS_TOKEN = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
 GOPLUS_CHAINS = "https://api.gopluslabs.io/api/v1/supported_chains"
-
-BURN_ADDRESSES = {
-    "0x0000000000000000000000000000000000000000",
-    "0x000000000000000000000000000000000000dead",
-}
-
 
 class EvmAdapter(ChainAdapter):
     """One class, many chains. All behaviour comes from config.CHAINS[key]."""
@@ -40,17 +35,17 @@ class EvmAdapter(ChainAdapter):
         self.blockscout = self.cfg.get("blockscout")
 
     # ── SAFETY ────────────────────────────────────────────────────
-    def safety(self, ca: str) -> SafetyReport:
+    def safety(self, ca: str, pair_address: str | None = None) -> SafetyReport:
         rep = SafetyReport(ca=ca, chain=self.key)
         ca_l = (ca or "").lower()
 
-        got_goplus = self._apply_goplus(rep, ca_l)
+        got_goplus = self._apply_goplus(rep, ca_l, pair_address)
         if not got_goplus:
             rep.flags.append("goplus_unavailable")
 
         # Holder distribution is the field we refuse to guess at.
         if rep.top_holder_pct is None and self.blockscout:
-            self._apply_blockscout_holders(rep, ca)
+            self._apply_blockscout_holders(rep, ca, pair_address)
 
         for f in ("top_holder_pct", "lp_locked_pct"):
             if getattr(rep, f) is None and f not in rep.unavailable:
@@ -59,7 +54,8 @@ class EvmAdapter(ChainAdapter):
         return self.apply_common_gates(rep)
 
     # -- GoPlus ---------------------------------------------------
-    def _apply_goplus(self, rep: SafetyReport, ca_l: str) -> bool:
+    def _apply_goplus(self, rep: SafetyReport, ca_l: str,
+                      pair_address: str | None = None) -> bool:
         if not self.goplus_chain_id:
             rep.unavailable.extend(
                 ["top_holder_pct", "lp_locked_pct", "honeypot",
@@ -125,13 +121,18 @@ class EvmAdapter(ChainAdapter):
         holders = result.get("holders")
         if holders:
             pcts = []
+            skipped = 0
             for h in holders:
                 addr = (h.get("address") or "").lower()
-                if addr in BURN_ADDRESSES:
-                    continue
                 if h.get("is_locked") in (1, "1"):
+                    skipped += 1
                     continue          # locked/vested supply is not float risk
+                if is_infrastructure_holder(addr, h.get("tag", ""), pair_address):
+                    skipped += 1
+                    continue          # pool / locker / bridge / burn
                 pcts.append(safe_float(h.get("percent")) * 100.0)
+            if skipped:
+                rep.flags.append(f"excluded_{skipped}_infra_holders")
             pcts.sort(reverse=True)
             if pcts:
                 rep.top_holder_pct = round(pcts[0], 2)
@@ -169,7 +170,8 @@ class EvmAdapter(ChainAdapter):
         return True
 
     # -- Blockscout fallback --------------------------------------
-    def _apply_blockscout_holders(self, rep: SafetyReport, ca: str) -> None:
+    def _apply_blockscout_holders(self, rep: SafetyReport, ca: str,
+                                  pair_address: str | None = None) -> None:
         """Holder distribution from a Blockscout instance."""
         url = f"{self.blockscout.rstrip('/')}/api/v2/tokens/{ca}/holders"
         data = http_get(url, timeout=15)
@@ -188,14 +190,21 @@ class EvmAdapter(ChainAdapter):
         if supply <= 0:
             return
 
-        pcts = []
+        pcts, skipped = [], 0
         for h in items:
-            addr = ((h.get("address") or {}).get("hash") or "").lower()
-            if addr in BURN_ADDRESSES:
+            a = h.get("address") or {}
+            addr = (a.get("hash") or "").lower()
+            tag = a.get("name") or a.get("implementation_name") or ""
+            # Blockscout marks contracts — pools and lockers are contracts,
+            # ordinary holders are not.
+            if a.get("is_contract") or is_infrastructure_holder(addr, tag, pair_address):
+                skipped += 1
                 continue
             val = safe_float(h.get("value"))
             if val > 0:
                 pcts.append(val / supply * 100.0)
+        if skipped:
+            rep.flags.append(f"excluded_{skipped}_infra_holders")
         if not pcts:
             return
 

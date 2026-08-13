@@ -100,7 +100,7 @@ def test_chain(key: str) -> bool:
             line()
             show_market(m)
             print()
-            show_safety(ad.safety(ca))
+            show_safety(ad.safety(ca, m.pair_address))
             print(f"\n  chart:   {ad.chart_url(ca)}")
             return True
     print("  -> no candidate had a live pair on this chain")
@@ -119,7 +119,7 @@ def test_ca(ca: str):
     line("=")
     show_market(m)
     print()
-    show_safety(ad.safety(ca))
+    show_safety(ad.safety(ca, m.pair_address))
     print(f"\n  explorer: {ad.explorer_url(ca)}")
     print(f"  chart:    {ad.chart_url(ca)}")
 

@@ -49,6 +49,7 @@ class TokenMarket:
     buys_1h: int = 0
     sells_1h: int = 0
     age_hours: float = 999.0
+    age_known: bool = False
     dex: str = ""
     pair_address: str = ""
     launchpad: Optional[str] = None
@@ -201,7 +202,9 @@ class _Throttle:
         self._last = time.monotonic()
 
 
-_GT_THROTTLE = _Throttle(2.2)          # ~27 req/min, comfortably inside 30
+_GT_THROTTLE = _Throttle(3.0)          # GitHub runners share egress IPs with
+                                       # other GeckoTerminal users, so the
+                                       # practical ceiling is below 30/min
 _DISCOVERY_CACHE: dict = {}            # (source, network) -> (ts, result)
 _DISCOVERY_TTL = 90                    # seconds
 
@@ -282,7 +285,7 @@ def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
 
     for url in urls:
         _GT_THROTTLE.wait()
-        data = http_get(url)
+        data = http_get(url, retries=3)
         if not isinstance(data, dict):
             continue
         for pool in (data.get("data") or []):
@@ -353,7 +356,8 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
     base  = pair.get("baseToken") or {}
 
     created_ms = safe_float(pair.get("pairCreatedAt"), 0)
-    age_hours = ((time.time() * 1000) - created_ms) / 3_600_000 if created_ms else 999.0
+    age_known = created_ms > 0
+    age_hours = ((time.time() * 1000) - created_ms) / 3_600_000 if age_known else 999.0
 
     return TokenMarket(
         ca=ca,
@@ -377,10 +381,40 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
         buys_1h=safe_int(t1h.get("buys")),
         sells_1h=safe_int(t1h.get("sells")),
         age_hours=round(age_hours, 4),
+        age_known=age_known,
         dex=pair.get("dexId") or "",
         pair_address=pair.get("pairAddress") or "",
         launchpad=detect_launchpad(ca, pair),
     )
+
+
+BURN_ADDRESSES = {
+    "0x0000000000000000000000000000000000000000",
+    "0x000000000000000000000000000000000000dead",
+    "11111111111111111111111111111111",
+}
+
+NON_HOLDER_TAGS = (
+    "pair", "pool", " lp", "liquidity", "router", "dex", "amm",
+    "lock", "vault", "bridge", "burn", "staking", "curve", "escrow",
+)
+
+
+def is_infrastructure_holder(addr: str, tag: str = "",
+                             pair_address: str | None = None) -> bool:
+    """
+    True when a "holder" is really a pool, locker, bridge or burn address.
+
+    Counting these as whales is why a healthy ten-minute-old token reads as
+    50-100% concentrated: most of its float sits in the LP by design.
+    """
+    a = (addr or "").lower()
+    if a in BURN_ADDRESSES:
+        return True
+    if pair_address and a == pair_address.lower():
+        return True
+    low = (tag or "").lower()
+    return bool(low) and any(k in low for k in NON_HOLDER_TAGS)
 
 
 def market_sanity(m: "TokenMarket") -> list[str]:
@@ -393,8 +427,8 @@ def market_sanity(m: "TokenMarket") -> list[str]:
     """
     s = config.SANITY
     bad = []
-    if m.age_hours >= s["unknown_age_hours"]:
-        bad.append("age_unknown")
+    if not m.age_known:
+        bad.append("age_unknown")   # pairCreatedAt absent, not "very old"
     if m.liquidity_usd < s["min_liquidity_usd"]:
         bad.append(f"liquidity_${m.liquidity_usd:,.0f}")
     if m.liquidity_usd > 0 and m.fdv > 0:
@@ -498,8 +532,14 @@ class ChainAdapter(ABC):
         return rep
 
     @abstractmethod
-    def safety(self, ca: str) -> SafetyReport:
-        """Holder distribution, LP lock, authorities, taxes, creator."""
+    def safety(self, ca: str, pair_address: str | None = None) -> SafetyReport:
+        """
+        Holder distribution, LP lock, authorities, taxes, creator.
+
+        pair_address, when known, is excluded from holder concentration —
+        the liquidity pool holding most of the float is the normal case,
+        not a whale.
+        """
 
     @abstractmethod
     def creator_activity(self, ca: str, creator: str | None = None) -> CreatorActivity:
