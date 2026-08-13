@@ -126,6 +126,41 @@ def test_alerts():
           alerts.send("x").ok if config.TELEGRAM_BOT_TOKEN else False, False)
 
 
+def test_store():
+    """The in-memory fallback must behave like Supabase, or offline runs lie."""
+    import time as _t
+    import store as store_mod, chains
+    print("\nstore (in-memory fallback)")
+    s = store_mod.Store(url="", key="")
+    check("no credentials -> not live", s.live, False)
+
+    ev = scoring.evaluate(STRONG, STRONG_SAFETY, "solana",
+                          social_channels=3, smart_wallets=2)
+    s.record_signal(ev, chains.get_adapter("solana"), sent_ok=True)
+    check("signal opens a position", len(s.open_positions()), 1)
+
+    s.close_position(STRONG.ca, "WIN", "TP2", final_pnl=118.0, peak_pnl=204.0)
+    check("closed position leaves open set", len(s.open_positions()), 0)
+    check("win rate computed", s.stats()["win_rate"], 100.0)
+
+    now = _t.time()
+    s.record_mentions([
+        {"ca": "X1", "chain": "solana", "channel": "Blessed", "seen_at": now},
+        {"ca": "X1", "chain": "solana", "channel": "Catfish", "seen_at": now},
+        {"ca": "X2", "chain": "solana", "channel": "Blessed", "seen_at": now},
+        {"ca": "X3", "chain": "solana", "channel": "Kook", "seen_at": now - 99999},
+    ])
+    check("two channels counted", len(s.channels_for("X1")), 2)
+    check("one channel not inflated", len(s.channels_for("X2")), 1)
+    check("stale mention excluded", len(s.channels_for("X3")), 0)
+
+    check("dedupe map populated", list(s.recently_alerted().keys()), [STRONG.ca])
+    check("zero window clears dedupe", s.recently_alerted(minutes=0), {})
+
+    s.mark_watch_event(STRONG.ca, "TP1", 52.0)
+    check("watch event recorded", s.fired_watch_events(STRONG.ca), {"TP1"})
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -193,6 +228,7 @@ def main():
         print(f"  tier misses: {ev_reddit.tier.failures.get('first_moon')}")
 
     test_alerts()
+    test_store()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

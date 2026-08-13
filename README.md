@@ -54,6 +54,8 @@ chains.py                 registry, address routing, chain resolution
 discover_chain_ids.py     one-time identifier resolution
 scoring.py                tiers, momentum, narrative, conviction — chain-blind
 alerts.py                 Telegram formatting + delivery (HTML, escaped)
+store.py                  Supabase persistence, in-memory fallback
+schema.sql                paste into Supabase SQL editor
 test_adapters.py          adapter smoke test (network)
 test_scoring.py           scoring unit tests (offline)
 ```
