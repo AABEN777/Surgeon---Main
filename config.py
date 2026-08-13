@@ -133,9 +133,24 @@ THRESHOLDS = {
 }
 
 # Newer / thinner chains need looser absolute dollar gates.
+# Newer chains trade at a fraction of Solana's dollar sizes. REDDIT on
+# Robinhood was a real 321%-in-an-hour move on $7.8k liquidity and an $8k
+# FDV — invisible to Solana-calibrated floors.
 CHAIN_THRESHOLD_OVERRIDES = {
-    "robinhood": {"first_moon": {"min_liquidity": 5_000, "min_volume_24h": 25_000}},
-    "monad":     {"first_moon": {"min_liquidity": 5_000, "min_volume_24h": 20_000}},
+    "robinhood": {
+        "first_moon":  {"min_liquidity": 4_000, "min_fdv": 5_000,
+                        "max_fdv": 100_000, "min_volume_24h": 8_000},
+        "second_moon": {"min_liquidity": 10_000, "min_fdv": 50_000,
+                        "min_volume_24h": 25_000},
+    },
+    "monad": {
+        "first_moon":  {"min_liquidity": 4_000, "min_fdv": 5_000,
+                        "min_volume_24h": 8_000},
+        "second_moon": {"min_liquidity": 10_000, "min_fdv": 50_000,
+                        "min_volume_24h": 20_000},
+    },
+    "base": {"first_moon": {"min_fdv": 10_000, "min_volume_24h": 25_000}},
+    "bsc":  {"first_moon": {"min_fdv": 10_000, "min_volume_24h": 25_000}},
 }
 
 def thresholds_for(chain: str, tier: str) -> dict:
@@ -217,13 +232,20 @@ NARRATIVES = {
                                              "compute", "agi", "llm", "model"]},
     "ANIMAL":    {"points":  5, "patterns": ["dog", "cat", "pepe", "frog", "bear",
                                              "whale", "bird", "wolf", "ape", "bunny",
-                                             "hamster", "penguin"]},
+                                             "hamster", "penguin", "hippo", "shiba",
+                                             "inu", "monkey", "goat", "duck", "fox",
+                                             "tiger", "lion", "panda", "sloth",
+                                             "otter", "crab", "snail", "moo", "cow"]},
     "POLITICAL": {"points": -15, "patterns": ["trump", "maga", "biden", "political",
                                               "president", "congress", "democrat",
                                               "republican", "election"]},
     "ELON":      {"points": -8, "patterns": ["elon", "musk", "grok", "doge"]},
     "RWA":       {"points":  3, "patterns": ["stock", "gold", "oil", "bond", "equity"]},
 }
+
+# Checked in this order — a token matching both ELON and ANIMAL ("Doge") is
+# an ELON play, and ELON's 25% historical win rate must win the tie.
+NARRATIVE_PRIORITY = ["POLITICAL", "ELON", "AI", "RWA", "ANIMAL"]
 
 # ── SMART MONEY WALLETS ───────────────────────────────────────────
 # chain -> [{address, label}]

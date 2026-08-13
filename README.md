@@ -52,7 +52,9 @@ chain_solana.py           RugCheck + Helius
 chain_evm.py              GoPlus + Blockscout — serves all four EVM chains
 chains.py                 registry, address routing, chain resolution
 discover_chain_ids.py     one-time identifier resolution
-test_adapters.py          smoke test
+scoring.py                tiers, momentum, narrative, conviction — chain-blind
+test_adapters.py          adapter smoke test (network)
+test_scoring.py           scoring unit tests (offline)
 ```
 
 ## Design rules
