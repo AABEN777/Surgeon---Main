@@ -10,10 +10,11 @@ on:
         type: choice
         options:
           - both
+          - scoring-only
           - discover-chain-ids
           - test-adapters
       target:
-        description: "Optional: chain key (base, solana...) or a contract address"
+        description: "Optional: chain key or contract address"
         required: false
         type: string
 
@@ -46,6 +47,10 @@ jobs:
                   bad = 1; print('FAIL ', p, e)
           sys.exit(bad)
           "
+
+      - name: Scoring tests
+        if: inputs.task == 'both' || inputs.task == 'scoring-only'
+        run: python3 test_scoring.py
 
       - name: Discover chain identifiers
         if: inputs.task == 'both' || inputs.task == 'discover-chain-ids'
