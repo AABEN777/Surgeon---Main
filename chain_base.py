@@ -207,6 +207,8 @@ _GT_THROTTLE = _Throttle(3.0)          # GitHub runners share egress IPs with
                                        # practical ceiling is below 30/min
 _DISCOVERY_CACHE: dict = {}            # (source, network) -> (ts, result)
 _DISCOVERY_TTL = 90                    # seconds
+_GT_POOL_CACHE: dict = {}              # (network, ca) -> (ts, pool payload)
+_GT_POOL_TTL = 180
 
 
 def http_get(url: str, params: dict | None = None,
@@ -296,6 +298,10 @@ def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
             if ca and ca not in seen:
                 seen.add(ca)
                 found.append(ca)
+            # Pools minutes old are often not in DexScreener yet. Keep the
+            # payload so market() has something to fall back on.
+            if ca:
+                _GT_POOL_CACHE[(network, ca)] = (time.time(), pool)
 
     _DISCOVERY_CACHE[key] = (time.time(), found)
     return found
@@ -333,6 +339,80 @@ def dexscreener_discover(chain_id: str) -> list[str]:
 
     _DISCOVERY_CACHE[key] = (time.time(), found)
     return found
+
+
+def geckoterminal_market(ca: str, chain: str, network: str) -> TokenMarket:
+    """
+    Market snapshot from GeckoTerminal. Used when DexScreener has not indexed
+    a pool yet — which is common for exactly the pools we care about most,
+    the ones a few minutes old.
+    """
+    if not network:
+        return TokenMarket(ca=ca, chain=chain, ok=False, error="no_gt_network")
+
+    pool = None
+    hit = _GT_POOL_CACHE.get((network, ca))
+    if hit and (time.time() - hit[0]) < _GT_POOL_TTL:
+        pool = hit[1]
+    else:
+        _GT_THROTTLE.wait()
+        data = http_get(f"{GT_BASE}/networks/{network}/tokens/{ca}/pools",
+                        retries=2)
+        pools = (data or {}).get("data") or []
+        if pools:
+            pool = max(pools, key=lambda p: safe_float(
+                (p.get("attributes") or {}).get("reserve_in_usd")))
+            _GT_POOL_CACHE[(network, ca)] = (time.time(), pool)
+
+    if not pool:
+        return TokenMarket(ca=ca, chain=chain, ok=False, error="gt_no_pool")
+
+    a = pool.get("attributes") or {}
+    vol = a.get("volume_usd") or {}
+    chg = a.get("price_change_percentage") or {}
+    txs = a.get("transactions") or {}
+    t5m = txs.get("m5") or {}
+    t1h = txs.get("h1") or {}
+
+    # pool name looks like "REDDIT / WETH 0.3%"
+    pool_name = a.get("name") or ""
+    symbol = pool_name.split("/")[0].strip() if "/" in pool_name else "???"
+
+    created = a.get("pool_created_at")
+    age_known = bool(created)
+    age_hours = 999.0
+    if age_known:
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+        except Exception:
+            age_known = False
+
+    dex = (((pool.get("relationships") or {}).get("dex") or {})
+           .get("data") or {}).get("id") or ""
+
+    return TokenMarket(
+        ca=ca, chain=chain,
+        name=symbol, symbol=symbol,
+        price_usd=safe_float(a.get("base_token_price_usd")),
+        liquidity_usd=safe_float(a.get("reserve_in_usd")),
+        fdv=safe_float(a.get("fdv_usd")),
+        market_cap=safe_float(a.get("market_cap_usd")),
+        volume_24h=safe_float(vol.get("h24")),
+        volume_6h=safe_float(vol.get("h6")),
+        volume_1h=safe_float(vol.get("h1")),
+        volume_5m=safe_float(vol.get("m5")),
+        change_24h=safe_float(chg.get("h24")),
+        change_6h=safe_float(chg.get("h6")),
+        change_1h=safe_float(chg.get("h1")),
+        change_5m=safe_float(chg.get("m5")),
+        buys_5m=safe_int(t5m.get("buys")), sells_5m=safe_int(t5m.get("sells")),
+        buys_1h=safe_int(t1h.get("buys")), sells_1h=safe_int(t1h.get("sells")),
+        age_hours=round(age_hours, 4), age_known=age_known,
+        dex=dex, pair_address=a.get("address") or "",
+        launchpad="pumpfun" if ca.lower().endswith("pump") else None,
+    )
 
 
 def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
@@ -505,7 +585,15 @@ class ChainAdapter(ABC):
                 "merged": len(set(gt) | set(ds))}
 
     def market(self, ca: str) -> TokenMarket:
-        return dexscreener_market(ca, self.key, self.chain_id)
+        """DexScreener first, GeckoTerminal when it has not indexed yet."""
+        m = dexscreener_market(ca, self.key, self.chain_id)
+        if m.ok and m.liquidity_usd > 0:
+            return m
+        alt = geckoterminal_market(ca, self.key, self.cfg.get("geckoterminal_id"))
+        if alt.ok and alt.liquidity_usd > 0:
+            alt.error = "via_geckoterminal"
+            return alt
+        return m if m.ok else alt
 
     @staticmethod
     def apply_common_gates(rep: SafetyReport) -> SafetyReport:

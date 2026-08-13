@@ -33,6 +33,8 @@ def show_market(m):
     print(f"  change:  5m {m.change_5m:+.1f}%  1h {m.change_1h:+.1f}%  "
           f"24h {m.change_24h:+.1f}%")
     print(f"  txns5m:  {m.buys_5m} buys / {m.sells_5m} sells")
+    src = "geckoterminal" if m.error == "via_geckoterminal" else "dexscreener"
+    print(f"  source:  {src}")
     print(f"  age:     {m.age_hours:.2f}h    dex: {m.dex}"
           f"{'   launchpad: ' + m.launchpad if m.launchpad else ''}")
     issues = m.sanity_issues
@@ -84,7 +86,7 @@ def test_chain(key: str) -> bool:
     # Prefer a young token — that is what Surgeon actually hunts. Scanning a
     # 74-day-old $15m coin tells us nothing about early-detection quality.
     picked = None
-    for ca in cas[:8]:
+    for ca in cas[:15]:
         m = ad.market(ca)
         if not (m.ok and m.liquidity_usd > 0):
             continue
