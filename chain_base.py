@@ -612,10 +612,16 @@ class ChainAdapter(ABC):
                 and rep.holder_count < s["min_holder_count"]):
             rep.hard_rejects.append(f"only_{rep.holder_count}_holders")
 
+        # Only reject an unverified contract when we can actually see the
+        # holder base is thin. Treating "unknown" as "thin" rejected almost
+        # every genuine launch on the newer chains, where contracts are
+        # routinely unverified for the first hour.
         if (s["reject_unverified_contract_if_thin"]
-                and "unverified_contract" in rep.flags
-                and (rep.holder_count is None or rep.holder_count < 50)):
-            rep.hard_rejects.append("unverified_contract_thin_holders")
+                and "unverified_contract" in rep.flags):
+            if rep.holder_count is not None and rep.holder_count < 50:
+                rep.hard_rejects.append("unverified_contract_thin_holders")
+            elif rep.holder_count is None:
+                rep.flags.append("unverified_contract_unknown_holders")
 
         return rep
 
