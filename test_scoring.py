@@ -321,6 +321,17 @@ def test_watchlist():
                            "first_seen": now - 7 * 3600, "first_age_hours": 0.05},
              on_conflict="ca")
     check("stale entry purged", s.purge_watchlist(), 1)
+
+    # Discovery re-surfaces the same pools between scans. Upserting on every
+    # sighting wiped first_seen and reset checks, so a token could be
+    # re-checked repeatedly and still look untouched — and never age out.
+    check("first park accepted", s.watch_later("dup", "solana", 0.05), True)
+    kept = s.select("watchlist", {"ca": "eq.dup"})[0]["first_seen"]
+    s.bump_check("dup", 0)
+    check("re-park ignored", s.watch_later("dup", "solana", 0.30), False)
+    again = s.select("watchlist", {"ca": "eq.dup"})[0]
+    check("check count survives re-park", again["checks"], 1)
+    check("first_seen survives re-park", again["first_seen"] == kept, True)
     s.drop_from_watchlist("ready")
     check("dropped after revival", [r["ca"] for r in s.due_for_recheck()], [])
 

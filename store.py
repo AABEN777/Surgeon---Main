@@ -271,13 +271,26 @@ class Store:
     # scan they have dropped out of the new-pool feed. Waiting is correct;
     # forgetting is not.
     def watch_later(self, ca: str, chain: str, age_hours: float,
-                    name: str = "", symbol: str = ""):
-        return self.upsert("watchlist", {
+                    name: str = "", symbol: str = "") -> bool:
+        """
+        Park a token, once.
+
+        Discovery re-surfaces the same pools between scans, and an upsert on
+        every sighting overwrote first_seen and reset checks to zero — so a
+        token could be re-checked repeatedly and still look untouched, and
+        could never age out of the queue. Existing entries are left alone.
+        """
+        existing = self.select("watchlist",
+                               {"select": "ca", "ca": f"eq.{ca}", "limit": "1"})
+        if existing:
+            return False
+        self.insert("watchlist", {
             "ca": ca, "chain": chain, "name": name, "symbol": symbol,
             "first_seen": time.time(),
             "first_age_hours": age_hours,
             "checks": 0,
-        }, on_conflict="ca")
+        })
+        return True
 
     def due_for_recheck(self, max_age_hours: float = 6.0,
                         min_age_hours: Optional[float] = None,

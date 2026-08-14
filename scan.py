@@ -116,6 +116,8 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                                                        "limit": "500"})))
 
     revived: dict[str, int] = {}
+    outcomes = {"no_market": 0, "aged_out": 0, "still_short": 0,
+                "low_conviction": 0, "revived": 0}
     for row in rows:
         ca, chain = row.get("ca"), row.get("chain")
         if not ca or not chain or ca in already:
@@ -125,6 +127,7 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
             market = adapter.market(ca)
             if not market.ok:
                 store.drop_from_watchlist(ca)
+                outcomes["no_market"] += 1
                 continue
 
             tier = scoring.classify_tier(market, chain)
@@ -132,8 +135,10 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                 # Aged past the window entirely — stop carrying it.
                 if market.age_known and market.age_hours > 6:
                     store.drop_from_watchlist(ca)
+                    outcomes["aged_out"] += 1
                 else:
                     store.bump_check(ca, int(row.get("checks") or 0))
+                    outcomes["still_short"] += 1
                 continue
 
             safety = adapter.safety(ca, market.pair_address)
@@ -142,6 +147,7 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
             ev.from_watchlist = True
             if not ev.should_alert:
                 store.bump_check(ca, int(row.get("checks") or 0))
+                outcomes["low_conviction"] += 1
                 continue
 
             log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh, "
@@ -159,8 +165,12 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
             store.record_signal(ev, adapter, sent_ok=sent_ok)
             store.drop_from_watchlist(ca)
             revived[chain] = revived.get(chain, 0) + 1
+            outcomes["revived"] += 1
         except Exception as e:
             log.warning("recheck %s failed: %s", ca[:12], e)
+
+    log.info("recheck outcomes: " +
+             ", ".join(f"{k}={v}" for k, v in outcomes.items() if v))
     return revived
 
 
@@ -256,9 +266,9 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                 # Too young is a "not yet", not a "no". Park it.
                 if (run.parked < min(MAX_PARK_PER_SCAN, park_budget)
                         and _worth_parking(pre, market)):
-                    store.watch_later(ca, chain, market.age_hours,
-                                      market.name, market.symbol)
-                    run.parked += 1
+                    if store.watch_later(ca, chain, market.age_hours,
+                                         market.name, market.symbol):
+                        run.parked += 1
                 continue
 
             safety = adapter.safety(ca, market.pair_address)
