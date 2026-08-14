@@ -260,13 +260,32 @@ def test_watchlist():
         return TokenMarket(ca="w", chain="solana", name="W", symbol="W",
                            liquidity_usd=liq, fdv=fdv, volume_24h=vol,
                            volume_1h=vol, change_1h=c1h, change_5m=12,
+                           buys_5m=8, sells_5m=2,
                            age_hours=age, age_known=True, dex="raydium")
 
     def park(m):
         return scan._worth_parking(
             scoring.classify_tier(m, "solana", session="NORMAL"), m)
 
+    def mk_traded(**kw):
+        base = dict(ca="w", chain="solana", name="W", symbol="W",
+                    liquidity_usd=40000, fdv=60000, volume_24h=80000,
+                    volume_1h=80000, change_1h=60, change_5m=12, buys_5m=8,
+                    sells_5m=2, age_hours=0.04, age_known=True, dex="raydium")
+        base.update(kw)
+        return TokenMarket(**base)
+
+    check("only sellers not parked",
+          park(mk_traded(buys_5m=0, sells_5m=5)), False)
+
     check("healthy young pool parked", park(mk(0.04)), True)
+    # Re-check slots are the scarce resource, not database rows.
+    check("untraded pool not parked",
+          park(TokenMarket(ca="u", chain="solana", name="U", symbol="U",
+                           liquidity_usd=6000, fdv=9000, volume_24h=0,
+                           volume_1h=0, change_1h=2, change_5m=0,
+                           buys_5m=0, sells_5m=0, age_hours=0.04,
+                           age_known=True, dex="raydium")), False)
     # Liquidity, volume and turnover all accumulate with time, so a pool
     # three minutes old failing them is one objection, not four.
     check("no volume yet still parked", park(mk(0.04, vol=200, c1h=2)), True)
@@ -294,6 +313,14 @@ def test_watchlist():
                            "last_checked": now - 30}, on_conflict="ca")
     due = [r["ca"] for r in s.due_for_recheck()]
     check("only matured tokens re-checked", due, ["ready"])
+
+    # Stale rows were only deleted when re-checked, but re-check skipped
+    # anything past the window — so they became permanent and starved the
+    # fresh ones behind them.
+    s.upsert("watchlist", {"ca": "ancient", "chain": "solana",
+                           "first_seen": now - 7 * 3600, "first_age_hours": 0.05},
+             on_conflict="ca")
+    check("stale entry purged", s.purge_watchlist(), 1)
     s.drop_from_watchlist("ready")
     check("dropped after revival", [r["ca"] for r in s.due_for_recheck()], [])
 

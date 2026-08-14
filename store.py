@@ -282,7 +282,7 @@ class Store:
     def due_for_recheck(self, max_age_hours: float = 6.0,
                         min_age_hours: Optional[float] = None,
                         recheck_gap_seconds: int = 240,
-                        limit: int = 20) -> list[dict]:
+                        limit: int = 45) -> list[dict]:
         """
         Parked tokens that have actually aged into range.
 
@@ -317,6 +317,32 @@ class Store:
             if len(due) >= limit:
                 break
         return due
+
+    def purge_watchlist(self, max_age_hours: float = 6.0) -> int:
+        """
+        Delete entries past their useful life.
+
+        Rows were only ever removed when re-checked, but due_for_recheck
+        ignores anything older than the window — so stale entries became
+        permanent and buried the fresh ones behind them.
+        """
+        cutoff = time.time() - max_age_hours * 3600
+        if not self.live:
+            before = len(_mem.get("watchlist", []))
+            _mem["watchlist"] = [r for r in _mem.get("watchlist", [])
+                                 if float(r.get("first_seen") or 0) >= cutoff]
+            return before - len(_mem["watchlist"])
+        stale = self.select("watchlist", {"select": "ca",
+                                          "first_seen": f"lt.{cutoff}",
+                                          "limit": "500"})
+        self._req("DELETE", "watchlist", params={"first_seen": f"lt.{cutoff}"})
+        return len(stale)
+
+    def watchlist_size(self, chain: Optional[str] = None) -> int:
+        params = {"select": "ca", "limit": "1000"}
+        if chain:
+            params["chain"] = f"eq.{chain}"
+        return len(self.select("watchlist", params))
 
     def drop_from_watchlist(self, ca: str):
         if not self.live:

@@ -34,6 +34,9 @@ log = logging.getLogger("surgeon.scan")
 
 # Cap per chain per scan so a burst of launches cannot flood the watchlist.
 MAX_PARK_PER_SCAN = 25
+# Ceiling per chain. Inflow far exceeds re-check throughput, so without this
+# the queue grows faster than it drains and fresh tokens starve behind stale.
+MAX_WATCHLIST_PER_CHAIN = 120
 
 
 @dataclass
@@ -84,6 +87,16 @@ def _worth_parking(tier_result, market) -> bool:
         return False          # dust pool, not a launch
     if not (1_000 <= market.fdv <= 5_000_000):
         return False          # absurd supply either way
+
+    # Early signs of life. Remembering a pool nobody has traded costs a
+    # re-check slot that a token with actual buyers could have used, and at
+    # 500 parked per hour against 45 re-checks those slots are the scarce
+    # resource — not database rows.
+    traded = market.buys_5m >= 2 or market.volume_1h > 0 or market.volume_24h > 0
+    if not traded:
+        return False
+    if market.sells_5m > 0 and market.buys_5m == 0:
+        return False          # only sellers so far
     return True
 
 
@@ -210,6 +223,9 @@ def scan_chain(chain: str, social_counts: dict[str, int],
     run = ChainRun(chain=chain)
     adapter = chains.get_adapter(chain)
     already = already if already is not None else {}
+    park_budget = max(0, MAX_WATCHLIST_PER_CHAIN - store.watchlist_size(chain))
+    if park_budget == 0:
+        log.info("[%s] watchlist full — parking paused this scan", chain)
 
     try:
         candidates = adapter.discover()
@@ -238,7 +254,8 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                 run.reject("tier")
                 run.gate_fail(pre.failures)
                 # Too young is a "not yet", not a "no". Park it.
-                if run.parked < MAX_PARK_PER_SCAN and _worth_parking(pre, market):
+                if (run.parked < min(MAX_PARK_PER_SCAN, park_budget)
+                        and _worth_parking(pre, market)):
                     store.watch_later(ca, chain, market.age_hours,
                                       market.name, market.symbol)
                     run.parked += 1
@@ -329,6 +346,10 @@ def main() -> int:
     already = store.recently_alerted()
     if already:
         log.info("%d tokens inside re-alert cooldown", len(already))
+
+    purged = store.purge_watchlist()
+    if purged:
+        log.info("purged %d stale watchlist entries", purged)
 
     revived = revisit_watchlist(social_counts, args.dry_run, already)
 
