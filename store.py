@@ -27,7 +27,8 @@ _session = requests.Session()
 _session.headers.update({"User-Agent": config.USER_AGENT})
 
 # in-memory fallback
-_mem: dict[str, list[dict]] = {"signals": [], "mentions": [], "positions": []}
+_mem: dict[str, list[dict]] = {"signals": [], "mentions": [],
+                               "positions": [], "watchlist": []}
 
 
 class Store:
@@ -262,6 +263,47 @@ class Store:
         rows = self.select("watch_events",
                            {"select": "event", "ca": f"eq.{ca}", "limit": "50"})
         return {r.get("event") for r in rows if r.get("event")}
+
+    # ── watchlist ─────────────────────────────────────────────────
+    # Tokens rejected only for being too young. Discovery surfaces pools
+    # minutes old, the entry-delay filter wants ten minutes, and by the next
+    # scan they have dropped out of the new-pool feed. Waiting is correct;
+    # forgetting is not.
+    def watch_later(self, ca: str, chain: str, age_hours: float,
+                    name: str = "", symbol: str = ""):
+        return self.upsert("watchlist", {
+            "ca": ca, "chain": chain, "name": name, "symbol": symbol,
+            "first_seen": time.time(),
+            "first_age_hours": age_hours,
+            "checks": 0,
+        }, on_conflict="ca")
+
+    def due_for_recheck(self, max_age_hours: float = 6.0) -> list[dict]:
+        """
+        Entries old enough to qualify now, and not yet stale.
+
+        max_age is generous — a token that was two minutes old at discovery
+        has hours of runway before it stops being interesting.
+        """
+        cutoff = time.time() - max_age_hours * 3600
+        rows = self.select("watchlist", {
+            "select": "*",
+            "first_seen": f"gte.{cutoff}",
+            "order": "first_seen.asc",
+            "limit": "150",
+        })
+        return rows
+
+    def drop_from_watchlist(self, ca: str):
+        if not self.live:
+            _mem["watchlist"] = [r for r in _mem.get("watchlist", [])
+                                 if r.get("ca") != ca]
+            return []
+        return self._req("DELETE", "watchlist", params={"ca": f"eq.{ca}"})
+
+    def bump_check(self, ca: str, checks: int):
+        return self.update("watchlist", {"ca": ca},
+                           {"checks": checks + 1, "last_checked": time.time()})
 
     # ── social mentions ───────────────────────────────────────────
     def record_mentions(self, rows: list[dict]):

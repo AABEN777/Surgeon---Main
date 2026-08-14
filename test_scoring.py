@@ -248,6 +248,37 @@ def test_tiers():
           scoring.classify_tier(gap, "solana", session="NORMAL").tier, "boosted")
 
 
+def test_watchlist():
+    """
+    Discovery finds pools minutes old; the entry filter wants ten minutes.
+    Parking is what stops that gap from silently discarding every launch.
+    """
+    import scan, store as store_mod
+    print("\nwatchlist")
+
+    def mk(age, liq=40000, fdv=60000, vol=80000, c1h=60):
+        return TokenMarket(ca="w", chain="solana", name="W", symbol="W",
+                           liquidity_usd=liq, fdv=fdv, volume_24h=vol,
+                           volume_1h=vol, change_1h=c1h, change_5m=12,
+                           age_hours=age, age_known=True, dex="raydium")
+
+    young = scoring.classify_tier(mk(0.04), "solana", session="NORMAL")
+    check("too young is parked", scan._only_too_young(young), True)
+
+    thin = scoring.classify_tier(mk(0.04, liq=800, fdv=2000, vol=50, c1h=1),
+                                 "solana", session="NORMAL")
+    check("young AND thin is not parked", scan._only_too_young(thin), False)
+
+    old = scoring.classify_tier(mk(48), "solana", session="NORMAL")
+    check("too old is not parked", scan._only_too_young(old), False)
+
+    s = store_mod.Store(url="", key="")
+    s.watch_later("w", "solana", 0.04, "W", "W")
+    check("parked token stored", len(s.due_for_recheck()), 1)
+    s.drop_from_watchlist("w")
+    check("dropped after revival", len(s.due_for_recheck()), 0)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -318,6 +349,7 @@ def main():
     test_store()
     test_social()
     test_tiers()
+    test_watchlist()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

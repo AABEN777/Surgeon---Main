@@ -39,6 +39,8 @@ class ChainRun:
     discovered: int = 0
     evaluated: int = 0
     alerted: int = 0
+    parked: int = 0
+    revived: int = 0
     rejects: dict = field(default_factory=dict)
     gate_fails: dict = field(default_factory=dict)
     errors: int = 0
@@ -57,6 +59,71 @@ class ChainRun:
             for f in fails:
                 key = f"{tier}:{f.split(' ')[0]}"
                 self.gate_fails[key] = self.gate_fails.get(key, 0) + 1
+
+
+def _only_too_young(tier_result) -> bool:
+    """True when age was the sole thing standing in the way."""
+    fails = tier_result.failures.get("first_moon") or []
+    if not fails:
+        return False
+    return all("age" in f and "<" in f for f in fails)
+
+
+def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
+                      already: dict[str, float]) -> dict[str, int]:
+    """
+    Re-evaluate parked tokens that have now aged into range.
+
+    This is the entry-delay filter completed: reject on sight, look again
+    once the token has survived the window that kills most rugs.
+    """
+    rows = store.due_for_recheck()
+    if not rows:
+        return {}
+    log.info("re-checking %d parked tokens", len(rows))
+
+    revived: dict[str, int] = {}
+    for row in rows:
+        ca, chain = row.get("ca"), row.get("chain")
+        if not ca or not chain or ca in already:
+            continue
+        try:
+            adapter = chains.get_adapter(chain)
+            market = adapter.market(ca)
+            if not market.ok:
+                store.drop_from_watchlist(ca)
+                continue
+
+            tier = scoring.classify_tier(market, chain)
+            if not tier.matched:
+                # Aged past the window entirely — stop carrying it.
+                if market.age_known and market.age_hours > 6:
+                    store.drop_from_watchlist(ca)
+                else:
+                    store.bump_check(ca, int(row.get("checks") or 0))
+                continue
+
+            safety = adapter.safety(ca, market.pair_address)
+            ev = scoring.evaluate(market, safety, chain,
+                                  social_channels=social_counts.get(ca, 0))
+            if not ev.should_alert:
+                store.bump_check(ca, int(row.get("checks") or 0))
+                continue
+
+            log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh",
+                     chain, market.name, market.symbol, ev.tier.tier,
+                     ev.conviction.score, float(row.get("first_age_hours") or 0))
+
+            if not dry_run:
+                res = alerts.send_signal(ev, adapter)
+                store.record_signal(ev, adapter, sent_ok=res.ok)
+                if res.ok:
+                    already[ca] = time.time()
+            store.drop_from_watchlist(ca)
+            revived[chain] = revived.get(chain, 0) + 1
+        except Exception as e:
+            log.warning("recheck %s failed: %s", ca[:12], e)
+    return revived
 
 
 def portfolio_blocked() -> tuple[bool, str]:
@@ -145,6 +212,11 @@ def scan_chain(chain: str, social_counts: dict[str, int],
             if not pre.matched:
                 run.reject("tier")
                 run.gate_fail(pre.failures)
+                # Too young is a "not yet", not a "no". Park it.
+                if _only_too_young(pre):
+                    store.watch_later(ca, chain, market.age_hours,
+                                      market.name, market.symbol)
+                    run.parked += 1
                 continue
 
             safety = adapter.safety(ca, market.pair_address)
@@ -192,9 +264,19 @@ def main() -> int:
                     help="actually send alerts; also needs SURGEON_LIVE=true")
     ap.add_argument("--social", action="store_true",
                     help="refresh Telegram mentions before scanning")
+    ap.add_argument("--test-alert", action="store_true",
+                    help="send one test message to Telegram and exit")
     ap.add_argument("--limit", type=int, default=40,
                     help="max candidates per chain")
     args = ap.parse_args()
+
+    if args.test_alert:
+        res = alerts.send(
+            "🏥 <b>Surgeon connectivity test</b>\n\n"
+            "If you can read this, the bot token and chat id are correct.\n"
+            "<code>test-ca-copy-me</code>")
+        print("sent" if res.ok else f"FAILED: {res.error}")
+        return 0 if res.ok else 1
 
     started = time.time()
 
@@ -219,6 +301,8 @@ def main() -> int:
     if already:
         log.info("%d tokens inside re-alert cooldown", len(already))
 
+    revived = revisit_watchlist(social_counts, args.dry_run, already)
+
     targets = [args.chain] if args.chain else config.enabled_chains()
     runs = []
     for chain in targets:
@@ -236,9 +320,11 @@ def main() -> int:
         total_alerts += r.alerted
         top = sorted(r.rejects.items(), key=lambda x: -x[1])[:3]
         reasons = ", ".join(f"{k}×{v}" for k, v in top) or "-"
+        rev = revived.get(r.chain, 0)
         print(f"  {config.CHAINS[r.chain]['display']:<18} "
               f"found {r.discovered:>3}  scored {r.evaluated:>3}  "
-              f"alerts {r.alerted:>2}   {reasons}")
+              f"alerts {r.alerted + rev:>2}  parked {r.parked:>3}"
+              + (f"  revived {rev}" if rev else "") + f"   {reasons}")
         if r.gate_fails:
             worst = sorted(r.gate_fails.items(), key=lambda x: -x[1])[:5]
             print("        blocked by: " +
