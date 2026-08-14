@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 import config
 import chains
+import chain_base
 import scoring
 import alerts
 import social
@@ -33,10 +34,10 @@ logging.basicConfig(
 log = logging.getLogger("surgeon.scan")
 
 # Cap per chain per scan so a burst of launches cannot flood the watchlist.
-MAX_PARK_PER_SCAN = 25
+MAX_PARK_PER_SCAN = 60
 # Ceiling per chain. Inflow far exceeds re-check throughput, so without this
 # the queue grows faster than it drains and fresh tokens starve behind stale.
-MAX_WATCHLIST_PER_CHAIN = 120
+MAX_WATCHLIST_PER_CHAIN = 400
 
 
 @dataclass
@@ -92,11 +93,15 @@ def _worth_parking(tier_result, market) -> bool:
     # re-check slot that a token with actual buyers could have used, and at
     # 500 parked per hour against 45 re-checks those slots are the scarce
     # resource — not database rows.
-    traded = market.buys_5m >= 2 or market.volume_1h > 0 or market.volume_24h > 0
-    if not traded:
-        return False
-    if market.sells_5m > 0 and market.buys_5m == 0:
-        return False          # only sellers so far
+    # A wide net is correct here — memecoin outcomes are fat-tailed and a
+    # quiet pool genuinely can turn. The bar only needs to exclude pools
+    # with no participants at all, because re-checks are now batched and
+    # holding a token costs a fraction of an API call rather than a whole one.
+    vol = market.volume_1h or market.volume_24h
+    if vol <= 0 and market.buys_5m == 0:
+        return False          # nobody has traded it at all
+    if market.sells_5m >= 5 and market.buys_5m == 0:
+        return False          # sellers only, no bid
     return True
 
 
@@ -118,56 +123,72 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
     revived: dict[str, int] = {}
     outcomes = {"no_market": 0, "aged_out": 0, "still_short": 0,
                 "low_conviction": 0, "revived": 0}
+
+    # Fetch every parked token per chain in batches of 30, then evaluate.
+    by_chain: dict[str, list[dict]] = {}
     for row in rows:
-        ca, chain = row.get("ca"), row.get("chain")
-        if not ca or not chain or ca in already:
+        if row.get("ca") and row.get("chain"):
+            by_chain.setdefault(row["chain"], []).append(row)
+
+    for chain, chain_rows in by_chain.items():
+        cas = [r["ca"] for r in chain_rows if r["ca"] not in already]
+        if not cas:
             continue
-        try:
-            adapter = chains.get_adapter(chain)
-            market = adapter.market(ca)
-            if not market.ok:
-                store.drop_from_watchlist(ca)
-                outcomes["no_market"] += 1
-                continue
+        adapter = chains.get_adapter(chain)
+        markets = chain_base.dexscreener_markets(
+            cas, chain, config.CHAINS[chain]["dexscreener_id"])
 
-            tier = scoring.classify_tier(market, chain)
-            if not tier.matched:
-                # Aged past the window entirely — stop carrying it.
-                if market.age_known and market.age_hours > 6:
+        for row in chain_rows:
+            ca = row["ca"]
+            if ca in already:
+                continue
+            try:
+                market = markets.get(ca)
+                # DexScreener only. The GeckoTerminal fallback is for pools
+                # minutes old that are not indexed yet; a token still missing
+                # hours later is dead.
+                if not market or not market.ok or market.liquidity_usd <= 0:
                     store.drop_from_watchlist(ca)
-                    outcomes["aged_out"] += 1
-                else:
+                    outcomes["no_market"] += 1
+                    continue
+
+                tier = scoring.classify_tier(market, chain)
+                if not tier.matched:
+                    if market.age_known and market.age_hours > 6:
+                        store.drop_from_watchlist(ca)
+                        outcomes["aged_out"] += 1
+                    else:
+                        store.bump_check(ca, int(row.get("checks") or 0))
+                        outcomes["still_short"] += 1
+                    continue
+
+                safety = adapter.safety(ca, market.pair_address)
+                ev = scoring.evaluate(market, safety, chain,
+                                      social_channels=social_counts.get(ca, 0))
+                ev.from_watchlist = True
+                if not ev.should_alert:
                     store.bump_check(ca, int(row.get("checks") or 0))
-                    outcomes["still_short"] += 1
-                continue
+                    outcomes["low_conviction"] += 1
+                    continue
 
-            safety = adapter.safety(ca, market.pair_address)
-            ev = scoring.evaluate(market, safety, chain,
-                                  social_channels=social_counts.get(ca, 0))
-            ev.from_watchlist = True
-            if not ev.should_alert:
-                store.bump_check(ca, int(row.get("checks") or 0))
-                outcomes["low_conviction"] += 1
-                continue
+                log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh, "
+                         "now %.2fh", chain, market.name, market.symbol,
+                         ev.tier.tier, ev.conviction.score,
+                         float(row.get("first_age_hours") or 0),
+                         float(row.get("_age_now") or market.age_hours))
 
-            log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh, "
-                     "now %.2fh", chain, market.name, market.symbol,
-                     ev.tier.tier, ev.conviction.score,
-                     float(row.get("first_age_hours") or 0),
-                     float(row.get("_age_now") or market.age_hours))
-
-            sent_ok = False
-            if not dry_run:
-                res = alerts.send_signal(ev, adapter)
-                sent_ok = res.ok
-                if res.ok:
-                    already[ca] = time.time()
-            store.record_signal(ev, adapter, sent_ok=sent_ok)
-            store.drop_from_watchlist(ca)
-            revived[chain] = revived.get(chain, 0) + 1
-            outcomes["revived"] += 1
-        except Exception as e:
-            log.warning("recheck %s failed: %s", ca[:12], e)
+                sent_ok = False
+                if not dry_run:
+                    res = alerts.send_signal(ev, adapter)
+                    sent_ok = res.ok
+                    if res.ok:
+                        already[ca] = time.time()
+                store.record_signal(ev, adapter, sent_ok=sent_ok)
+                store.drop_from_watchlist(ca)
+                revived[chain] = revived.get(chain, 0) + 1
+                outcomes["revived"] += 1
+            except Exception as e:
+                log.warning("recheck %s failed: %s", ca[:12], e)
 
     log.info("recheck outcomes: " +
              ", ".join(f"{k}={v}" for k, v in outcomes.items() if v))

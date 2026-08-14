@@ -319,7 +319,7 @@ WATCH = {
     "cooloff_minutes":       60,
     # A parked token that has failed the gates this many times is not going
     # to turn. Holding it costs a re-check slot a fresher token could use.
-    "max_watchlist_checks":   4,
+    "max_watchlist_checks":   12,
 }
 
 # ── DEDUPE ────────────────────────────────────────────────────────

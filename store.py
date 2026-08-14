@@ -309,7 +309,7 @@ class Store:
     def due_for_recheck(self, max_age_hours: float = 6.0,
                         min_age_hours: Optional[float] = None,
                         recheck_gap_seconds: int = 240,
-                        limit: int = 30) -> list[dict]:
+                        limit: int = 200) -> list[dict]:
         """
         Parked tokens that have actually aged into range.
 
@@ -329,7 +329,7 @@ class Store:
             "select": "*",
             "first_seen": f"gte.{cutoff}",
             "order": "last_checked.asc.nullsfirst",
-            "limit": "300",
+            "limit": "600",
         })
 
         due = []

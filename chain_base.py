@@ -427,7 +427,10 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
 
     # Deepest liquidity is the honest reference pool.
     pair = max(pairs, key=lambda p: safe_float((p.get("liquidity") or {}).get("usd")))
+    return _market_from_pair(ca, chain, pair)
 
+
+def _market_from_pair(ca: str, chain: str, pair: dict) -> TokenMarket:
     vol   = pair.get("volume") or {}
     chg   = pair.get("priceChange") or {}
     txns  = pair.get("txns") or {}
@@ -522,6 +525,51 @@ def market_sanity(m: "TokenMarket") -> list[str]:
     if not m.dex or m.dex == "unknown":
         bad.append("dex_unknown")
     return bad
+
+
+def dexscreener_markets(cas: list[str], chain: str,
+                        chain_id: str) -> dict[str, TokenMarket]:
+    """
+    Market data for many tokens at once.
+
+    DexScreener takes up to 30 comma-separated addresses per request, so a
+    300-token watchlist costs ten calls instead of three hundred. The wide
+    net was never too expensive to hold — it was being fetched one token at
+    a time, which is a different problem.
+    """
+    out: dict[str, TokenMarket] = {}
+    if not cas:
+        return out
+
+    wanted = {c.lower(): c for c in cas}
+
+    for i in range(0, len(cas), 30):
+        chunk = cas[i:i + 30]
+        data = http_get(f"{DEX_BASE}/latest/dex/tokens/{','.join(chunk)}")
+        if not data:
+            continue
+
+        # Group every returned pair under its base token, per chain.
+        by_token: dict[str, list[dict]] = {}
+        for pair in (data.get("pairs") or []):
+            if pair.get("chainId") != chain_id:
+                continue
+            addr = ((pair.get("baseToken") or {}).get("address") or "").lower()
+            if addr in wanted:
+                by_token.setdefault(addr, []).append(pair)
+
+        for addr, pairs in by_token.items():
+            deepest = max(pairs, key=lambda p: safe_float(
+                (p.get("liquidity") or {}).get("usd")))
+            out[wanted[addr]] = _market_from_pair(
+                wanted[addr], chain, deepest)
+
+    # Anything absent is genuinely not indexed — say so rather than omit it.
+    for ca in cas:
+        if ca not in out:
+            out[ca] = TokenMarket(ca=ca, chain=chain, ok=False,
+                                  error="no_pairs")
+    return out
 
 
 def detect_launchpad(ca: str, pair: dict) -> Optional[str]:

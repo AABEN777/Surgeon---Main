@@ -275,8 +275,16 @@ def test_watchlist():
         base.update(kw)
         return TokenMarket(**base)
 
-    check("only sellers not parked",
-          park(mk_traded(buys_5m=0, sells_5m=5)), False)
+    # Memecoin outcomes are fat-tailed: a quiet pool genuinely can turn, so
+    # the net stays wide. Re-checks are batched 30 tokens per request, which
+    # makes holding a token cost a fraction of an API call instead of one.
+    check("mixed flow still parked",
+          park(mk_traded(buys_5m=6, sells_5m=9)), True)
+    check("barely traded still parked",
+          park(mk_traded(buys_5m=2, volume_1h=120, volume_24h=120)), True)
+    check("sellers only, no bid — not parked",
+          park(mk_traded(buys_5m=0, sells_5m=7, volume_1h=300,
+                         volume_24h=300)), False)
 
     check("healthy young pool parked", park(mk(0.04)), True)
     # Re-check slots are the scarce resource, not database rows.
@@ -286,11 +294,16 @@ def test_watchlist():
                            volume_1h=0, change_1h=2, change_5m=0,
                            buys_5m=0, sells_5m=0, age_hours=0.04,
                            age_known=True, dex="raydium")), False)
+    check("thin but live pool parked",
+          park(TokenMarket(ca="v", chain="solana", name="V", symbol="V",
+                           liquidity_usd=6000, fdv=9000, volume_24h=200,
+                           volume_1h=200, change_1h=2, change_5m=0,
+                           buys_5m=7, sells_5m=1, age_hours=0.04,
+                           age_known=True, dex="raydium")), True)
     # Liquidity, volume and turnover all accumulate with time, so a pool
     # three minutes old failing them is one objection, not four.
-    check("no volume yet still parked", park(mk(0.04, vol=200, c1h=2)), True)
-    check("thin fresh pool still parked",
-          park(mk(0.04, liq=3200, fdv=5800, vol=400, c1h=4)), True)
+    check("fresh pool with real flow parked",
+          park(mk(0.04, liq=3200, fdv=5800, vol=900, c1h=4)), True)
     check("dust pool not parked",
           park(mk(0.04, liq=400, fdv=900, vol=10, c1h=0)), False)
     check("absurd fdv not parked",
@@ -348,7 +361,8 @@ def test_watchlist():
         s2.insert("watchlist", row)
     s2.insert("watchlist", {"ca": "spent", "chain": "solana",
                             "first_seen": now - 3600, "first_age_hours": 0.05,
-                            "checks": 4, "last_checked": now - 3600})
+                            "checks": config.WATCH["max_watchlist_checks"],
+                            "last_checked": now - 3600})
     check("round-robin order", [r["ca"] for r in s2.due_for_recheck()],
           ["never", "old"])
     check("exhausted token retired", s2.purge_watchlist(), 1)
