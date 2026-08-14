@@ -32,6 +32,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("surgeon.scan")
 
+# Cap per chain per scan so a burst of launches cannot flood the watchlist.
+MAX_PARK_PER_SCAN = 25
+
 
 @dataclass
 class ChainRun:
@@ -61,12 +64,39 @@ class ChainRun:
                 self.gate_fails[key] = self.gate_fails.get(key, 0) + 1
 
 
-def _only_too_young(tier_result) -> bool:
-    """True when age was the sole thing standing in the way."""
+# Failures a token outgrows on its own. Volume, turnover and hourly change
+# are all functions of elapsed time — a two-minute-old pool fails them
+# because it is two minutes old, not because it is weak.
+_TIME_FIXABLE = ("age", "vol1h", "turnover", "1h")
+
+
+def _worth_parking(tier_result, market) -> bool:
+    """
+    Structurally plausible but not yet mature.
+
+    Requires a genuinely too-young verdict, a real pool behind it, and
+    trustworthy data. Dust, absurd supply and broken snapshots are discarded
+    rather than carried — they do not improve with age.
+    """
     fails = tier_result.failures.get("first_moon") or []
     if not fails:
         return False
-    return all("age" in f and "<" in f for f in fails)
+
+    # must actually be too young, not too old
+    if not any(f.startswith("age") and "<" in f for f in fails):
+        return False
+
+    # every remaining objection must be one time can answer
+    if not all(any(f.startswith(k) for k in _TIME_FIXABLE) for f in fails):
+        return False
+
+    if market.sanity_issues:
+        return False
+    if market.liquidity_usd < 2_000:
+        return False
+    if not (1_000 <= market.fdv <= 5_000_000):
+        return False
+    return True
 
 
 def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
@@ -213,7 +243,7 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                 run.reject("tier")
                 run.gate_fail(pre.failures)
                 # Too young is a "not yet", not a "no". Park it.
-                if _only_too_young(pre):
+                if run.parked < MAX_PARK_PER_SCAN and _worth_parking(pre, market):
                     store.watch_later(ca, chain, market.age_hours,
                                       market.name, market.symbol)
                     run.parked += 1

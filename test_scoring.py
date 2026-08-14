@@ -262,15 +262,20 @@ def test_watchlist():
                            volume_1h=vol, change_1h=c1h, change_5m=12,
                            age_hours=age, age_known=True, dex="raydium")
 
-    young = scoring.classify_tier(mk(0.04), "solana", session="NORMAL")
-    check("too young is parked", scan._only_too_young(young), True)
+    def park(m):
+        return scan._worth_parking(
+            scoring.classify_tier(m, "solana", session="NORMAL"), m)
 
-    thin = scoring.classify_tier(mk(0.04, liq=800, fdv=2000, vol=50, c1h=1),
-                                 "solana", session="NORMAL")
-    check("young AND thin is not parked", scan._only_too_young(thin), False)
-
-    old = scoring.classify_tier(mk(48), "solana", session="NORMAL")
-    check("too old is not parked", scan._only_too_young(old), False)
+    check("healthy young pool parked", park(mk(0.04)), True)
+    # Volume and turnover are functions of elapsed time, so failing them at
+    # two minutes old is the same objection as being two minutes old.
+    check("no volume yet still parked",
+          park(mk(0.04, vol=200, c1h=2)), True)
+    check("dust liquidity not parked",
+          park(mk(0.04, liq=800, fdv=2000, vol=50, c1h=1)), False)
+    check("absurd fdv not parked",
+          park(mk(0.04, fdv=819_649_865, vol=100)), False)
+    check("too old not parked", park(mk(48)), False)
 
     s = store_mod.Store(url="", key="")
     s.watch_later("w", "solana", 0.04, "W", "W")
