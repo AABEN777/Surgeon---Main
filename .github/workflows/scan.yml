@@ -1,0 +1,59 @@
+name: Scan
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+    inputs:
+      chain:
+        description: "Single chain (blank = all)"
+        required: false
+        type: string
+      dry_run:
+        description: "Evaluate only, send no alerts"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: surgeon-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+      SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+      HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
+      PYTHONUNBUFFERED:   "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Scan
+        run: |
+          python3 scan.py \
+            ${{ inputs.chain && format('--chain {0}', inputs.chain) || '' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+  social:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule'
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python3 scan.py --social --dry-run --limit 0
