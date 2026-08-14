@@ -229,6 +229,7 @@ class Store:
             "safety_sources":  ",".join(s.sources),
             "unavailable":     ",".join(s.unavailable),
             "breakdown":       c.explain(),
+            "from_watchlist":  getattr(ev, "from_watchlist", False),
             "alerted_at":      time.time(),
             "alert_sent":      sent_ok,
             "outcome":         "pending",

@@ -318,6 +318,7 @@ class Evaluation:
     conviction: Conviction
     rejected_by: Optional[str] = None
     reject_detail: str = ""
+    from_watchlist: bool = False
 
     @property
     def should_alert(self) -> bool:

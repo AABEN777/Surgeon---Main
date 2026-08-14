@@ -126,6 +126,7 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
             safety = adapter.safety(ca, market.pair_address)
             ev = scoring.evaluate(market, safety, chain,
                                   social_channels=social_counts.get(ca, 0))
+            ev.from_watchlist = True
             if not ev.should_alert:
                 store.bump_check(ca, int(row.get("checks") or 0))
                 continue
@@ -136,11 +137,13 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                      float(row.get("first_age_hours") or 0),
                      float(row.get("_age_now") or market.age_hours))
 
+            sent_ok = False
             if not dry_run:
                 res = alerts.send_signal(ev, adapter)
-                store.record_signal(ev, adapter, sent_ok=res.ok)
+                sent_ok = res.ok
                 if res.ok:
                     already[ca] = time.time()
+            store.record_signal(ev, adapter, sent_ok=sent_ok)
             store.drop_from_watchlist(ca)
             revived[chain] = revived.get(chain, 0) + 1
         except Exception as e:
@@ -257,18 +260,22 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                      chain, market.name, market.symbol,
                      ev.tier.tier, ev.conviction.score, ev.conviction.explain())
 
+            # Record in both modes. A dry run that keeps no history teaches
+            # nothing; the only difference should be whether a message is
+            # sent, not whether the observation is remembered.
+            sent_ok = False
             if dry_run:
                 run.alerted += 1
-                continue
-
-            res = alerts.send_signal(ev, adapter)
-            if res.ok:
-                run.alerted += 1
-                already[ca] = time.time()
             else:
-                log.warning("[%s] alert failed for %s: %s",
-                            chain, market.symbol, res.error)
-            store.record_signal(ev, adapter, sent_ok=res.ok)
+                res = alerts.send_signal(ev, adapter)
+                sent_ok = res.ok
+                if res.ok:
+                    run.alerted += 1
+                    already[ca] = time.time()
+                else:
+                    log.warning("[%s] alert failed for %s: %s",
+                                chain, market.symbol, res.error)
+            store.record_signal(ev, adapter, sent_ok=sent_ok)
 
         except Exception as e:
             log.warning("[%s] %s failed: %s", chain, ca[:12], e)
