@@ -64,38 +64,26 @@ class ChainRun:
                 self.gate_fails[key] = self.gate_fails.get(key, 0) + 1
 
 
-# Failures a token outgrows on its own. Volume, turnover and hourly change
-# are all functions of elapsed time — a two-minute-old pool fails them
-# because it is two minutes old, not because it is weak.
-_TIME_FIXABLE = ("age", "vol1h", "turnover", "1h")
-
-
 def _worth_parking(tier_result, market) -> bool:
     """
-    Structurally plausible but not yet mature.
+    Too young, but structurally plausible.
 
-    Requires a genuinely too-young verdict, a real pool behind it, and
-    trustworthy data. Dust, absurd supply and broken snapshots are discarded
-    rather than carried — they do not improve with age.
+    An earlier version demanded every failure be age-shaped, which parked
+    almost nothing: a pool three minutes old also fails liquidity, volume and
+    turnover, because all of those accumulate with time. The honest question
+    is not which gates it missed but whether there is a real pool here that
+    could grow into them — so plausibility does the filtering, and the full
+    gates get applied again at revival.
     """
     fails = tier_result.failures.get("first_moon") or []
-    if not fails:
-        return False
-
-    # must actually be too young, not too old
     if not any(f.startswith("age") and "<" in f for f in fails):
-        return False
-
-    # every remaining objection must be one time can answer
-    if not all(any(f.startswith(k) for k in _TIME_FIXABLE) for f in fails):
-        return False
-
+        return False          # not too young — nothing to wait for
     if market.sanity_issues:
-        return False
-    if market.liquidity_usd < 2_000:
-        return False
+        return False          # broken data does not heal
+    if market.liquidity_usd < 1_000:
+        return False          # dust pool, not a launch
     if not (1_000 <= market.fdv <= 5_000_000):
-        return False
+        return False          # absurd supply either way
     return True
 
 

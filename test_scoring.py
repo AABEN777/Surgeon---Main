@@ -267,12 +267,13 @@ def test_watchlist():
             scoring.classify_tier(m, "solana", session="NORMAL"), m)
 
     check("healthy young pool parked", park(mk(0.04)), True)
-    # Volume and turnover are functions of elapsed time, so failing them at
-    # two minutes old is the same objection as being two minutes old.
-    check("no volume yet still parked",
-          park(mk(0.04, vol=200, c1h=2)), True)
-    check("dust liquidity not parked",
-          park(mk(0.04, liq=800, fdv=2000, vol=50, c1h=1)), False)
+    # Liquidity, volume and turnover all accumulate with time, so a pool
+    # three minutes old failing them is one objection, not four.
+    check("no volume yet still parked", park(mk(0.04, vol=200, c1h=2)), True)
+    check("thin fresh pool still parked",
+          park(mk(0.04, liq=3200, fdv=5800, vol=400, c1h=4)), True)
+    check("dust pool not parked",
+          park(mk(0.04, liq=400, fdv=900, vol=10, c1h=0)), False)
     check("absurd fdv not parked",
           park(mk(0.04, fdv=819_649_865, vol=100)), False)
     check("too old not parked", park(mk(48)), False)
