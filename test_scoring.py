@@ -161,6 +161,55 @@ def test_store():
     check("watch event recorded", s.fired_watch_events(STRONG.ca), {"TP1"})
 
 
+def test_social():
+    """Extraction must reject markup and keep real calls."""
+    import social
+    print("\nsocial extraction")
+
+    check("bare solana CA", social.extract_addresses(
+        "CA: 9d8EnYYZTybmSsAYc2vxNxY6opaiDrUwcx4FEhjMdxyu"),
+        ["9d8EnYYZTybmSsAYc2vxNxY6opaiDrUwcx4FEhjMdxyu"])
+    check("chart link only", social.extract_addresses(
+        "https://dexscreener.com/solana/9d8EnYYZTybmSsAYc2vxNxY6opaiDrUwcx4FEhjMdxyu"),
+        ["9d8EnYYZTybmSsAYc2vxNxY6opaiDrUwcx4FEhjMdxyu"])
+    check("base64 data-uri rejected", social.extract_addresses(
+        "url(data:image/svg+xml;base64,cDovL3d3dy53My5vcmcvMjAwMC9zdmc=)"), [])
+    check("unpadded base64 rejected", social.extract_addresses(
+        "src=data:image/png;base64,uZGVmaW5pdGUiLz48L2xpbmVhckdyYWRpZW50Pg"), [])
+    check("wSOL blocklisted", social.extract_addresses(
+        "So11111111111111111111111111111111111111112"), [])
+
+    both = social.extract_addresses(
+        "sol 9d8EnYYZTybmSsAYc2vxNxY6opaiDrUwcx4FEhjMdxyu "
+        "evm 0xcb5ecd927f4ef6c9bd9cc434bc2119e05160160c")
+    check("mixed line yields exactly two", len(both), 2)
+    check_true("no base58 fragment carved from EVM address",
+               not any(a.startswith("xcb5") for a in both))
+
+    page = ('<style>background:url(data:image/svg+xml;base64,'
+            'cDovL3d3dy53My5vcmcvMjAwMC9zdmc=)</style>'
+            '<div class="tgme_widget_message_text" dir="auto">'
+            'call 9d8EnYYZTybmSsAYc2vxNxY6opaiDrUwcx4FEhjMdxyu</div>')
+    texts = social._message_texts(page)
+    check("only message bodies parsed", len(texts), 1)
+    check_true("markup outside messages ignored",
+               "cDovL" not in " ".join(texts))
+
+    now = __import__("time").time()
+    M = social.Mention
+    mentions = [
+        M(ca="A", channel="Blessed", seen_at=now),
+        M(ca="A", channel="Blessed", seen_at=now),   # same channel twice
+        M(ca="A", channel="Catfish", seen_at=now),
+        M(ca="B", channel="Kook", seen_at=now),
+    ]
+    vel = social.velocity(mentions, min_channels=2)
+    check("velocity finds the consensus token", list(vel.keys()), ["A"])
+    check("repeat posts are not consensus",
+          social.channel_counts(mentions)["A"], 2)
+    check("single channel excluded", "B" in vel, False)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -229,6 +278,7 @@ def main():
 
     test_alerts()
     test_store()
+    test_social()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
