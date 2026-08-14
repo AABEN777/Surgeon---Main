@@ -317,6 +317,9 @@ WATCH = {
     "max_open_positions":    25,  # tracking cap
     "cooloff_losses":         2,
     "cooloff_minutes":       60,
+    # A parked token that has failed the gates this many times is not going
+    # to turn. Holding it costs a re-check slot a fresher token could use.
+    "max_watchlist_checks":   4,
 }
 
 # ── DEDUPE ────────────────────────────────────────────────────────

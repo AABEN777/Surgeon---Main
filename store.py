@@ -117,9 +117,23 @@ class Store:
 
         order = params.get("order")
         if order:
-            key, _, direction = order.partition(".")
-            out.sort(key=lambda r: (r.get(key) is None, r.get(key)),
-                     reverse=direction.startswith("desc"))
+            # PostgREST syntax: "col.asc", "col.desc.nullsfirst", ...
+            parts = order.split(".")
+            key = parts[0]
+            direction = parts[1] if len(parts) > 1 else "asc"
+            nulls = parts[2] if len(parts) > 2 else ""
+            desc = direction.startswith("desc")
+            nulls_first = ("nullsfirst" in nulls) or (not nulls and desc)
+
+            def sort_key(r):
+                v = r.get(key)
+                missing = v is None
+                rank = 0 if (missing == nulls_first) else 1
+                if desc:
+                    rank = 1 - rank
+                return (rank, v if not missing else 0)
+
+            out.sort(key=sort_key, reverse=desc)
 
         limit = params.get("limit")
         if limit:
@@ -295,7 +309,7 @@ class Store:
     def due_for_recheck(self, max_age_hours: float = 6.0,
                         min_age_hours: Optional[float] = None,
                         recheck_gap_seconds: int = 240,
-                        limit: int = 45) -> list[dict]:
+                        limit: int = 30) -> list[dict]:
         """
         Parked tokens that have actually aged into range.
 
@@ -308,11 +322,14 @@ class Store:
 
         now = time.time()
         cutoff = now - max_age_hours * 3600
+        # Ordered by least-recently-checked, not oldest-first. Oldest-first
+        # meant the same 45 tokens filled every slot on every scan while the
+        # rest of the queue was never looked at once.
         rows = self.select("watchlist", {
             "select": "*",
             "first_seen": f"gte.{cutoff}",
-            "order": "first_seen.asc",
-            "limit": "200",
+            "order": "last_checked.asc.nullsfirst",
+            "limit": "300",
         })
 
         due = []
@@ -322,6 +339,8 @@ class Store:
             age_now = (now - born_at) / 3600
             if age_now < min_age_hours:
                 continue                      # still inside the delay window
+            if int(r.get("checks") or 0) >= config.WATCH["max_watchlist_checks"]:
+                continue                      # exhausted, purge will collect it
             last = float(r.get("last_checked") or 0)
             if last and (now - last) < recheck_gap_seconds:
                 continue                      # checked moments ago
@@ -340,16 +359,27 @@ class Store:
         permanent and buried the fresh ones behind them.
         """
         cutoff = time.time() - max_age_hours * 3600
+        max_checks = config.WATCH["max_watchlist_checks"]
+
+        def dead(r):
+            return (float(r.get("first_seen") or 0) < cutoff
+                    or int(r.get("checks") or 0) >= max_checks)
+
         if not self.live:
             before = len(_mem.get("watchlist", []))
             _mem["watchlist"] = [r for r in _mem.get("watchlist", [])
-                                 if float(r.get("first_seen") or 0) >= cutoff]
+                                 if not dead(r)]
             return before - len(_mem["watchlist"])
+
         stale = self.select("watchlist", {"select": "ca",
                                           "first_seen": f"lt.{cutoff}",
                                           "limit": "500"})
         self._req("DELETE", "watchlist", params={"first_seen": f"lt.{cutoff}"})
-        return len(stale)
+        spent = self.select("watchlist", {"select": "ca",
+                                          "checks": f"gte.{max_checks}",
+                                          "limit": "500"})
+        self._req("DELETE", "watchlist", params={"checks": f"gte.{max_checks}"})
+        return len(stale) + len(spent)
 
     def watchlist_size(self, chain: Optional[str] = None) -> int:
         params = {"select": "ca", "limit": "1000"}

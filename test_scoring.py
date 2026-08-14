@@ -332,8 +332,31 @@ def test_watchlist():
     again = s.select("watchlist", {"ca": "eq.dup"})[0]
     check("check count survives re-park", again["checks"], 1)
     check("first_seen survives re-park", again["first_seen"] == kept, True)
-    s.drop_from_watchlist("ready")
-    check("dropped after revival", [r["ca"] for r in s.due_for_recheck()], [])
+
+    # Oldest-first meant the same 45 tokens filled every slot on every scan
+    # while 239 others were never looked at once. Least-recently-checked
+    # first gives the whole queue a turn.
+    # _mem is module-global, so isolate before asserting on ordering.
+    store_mod._mem["watchlist"] = []
+    s2 = store_mod.Store(url="", key="")
+    for ca, last, checks in (("never", None, 0), ("old", now - 3600, 1),
+                             ("recent", now - 60, 1)):
+        row = {"ca": ca, "chain": "solana", "first_seen": now - 3600,
+               "first_age_hours": 0.05, "checks": checks}
+        if last:
+            row["last_checked"] = last
+        s2.insert("watchlist", row)
+    s2.insert("watchlist", {"ca": "spent", "chain": "solana",
+                            "first_seen": now - 3600, "first_age_hours": 0.05,
+                            "checks": 4, "last_checked": now - 3600})
+    check("round-robin order", [r["ca"] for r in s2.due_for_recheck()],
+          ["never", "old"])
+    check("exhausted token retired", s2.purge_watchlist(), 1)
+    check("survivors kept", sorted(r["ca"] for r in s2.select("watchlist")),
+          ["never", "old", "recent"])
+    store_mod._mem["watchlist"] = []
+    check("dropped after revival",
+          [r["ca"] for r in s.due_for_recheck()], [])
 
 
 def main():
