@@ -40,10 +40,23 @@ class ChainRun:
     evaluated: int = 0
     alerted: int = 0
     rejects: dict = field(default_factory=dict)
+    gate_fails: dict = field(default_factory=dict)
     errors: int = 0
 
     def reject(self, reason: str):
         self.rejects[reason] = self.rejects.get(reason, 0) + 1
+
+    def gate_fail(self, tier_failures: dict):
+        """
+        Tally which specific threshold blocked each token.
+
+        "tier x38" tells us nothing actionable. Knowing that 34 of those 38
+        failed on 24h volume tells us exactly which number is wrong.
+        """
+        for tier, fails in tier_failures.items():
+            for f in fails:
+                key = f"{tier}:{f.split(' ')[0]}"
+                self.gate_fails[key] = self.gate_fails.get(key, 0) + 1
 
 
 def portfolio_blocked() -> tuple[bool, str]:
@@ -131,6 +144,7 @@ def scan_chain(chain: str, social_counts: dict[str, int],
             pre = scoring.classify_tier(market, chain)
             if not pre.matched:
                 run.reject("tier")
+                run.gate_fail(pre.failures)
                 continue
 
             safety = adapter.safety(ca, market.pair_address)
@@ -173,7 +187,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Surgeon scanner")
     ap.add_argument("--chain", help="scan a single chain")
     ap.add_argument("--dry-run", action="store_true",
-                    help="evaluate and log, send nothing")
+                    help="evaluate and log, send nothing (default)")
+    ap.add_argument("--live", action="store_true",
+                    help="actually send alerts; also needs SURGEON_LIVE=true")
     ap.add_argument("--social", action="store_true",
                     help="refresh Telegram mentions before scanning")
     ap.add_argument("--limit", type=int, default=40,
@@ -181,8 +197,14 @@ def main() -> int:
     args = ap.parse_args()
 
     started = time.time()
-    log.info("surgeon scan starting — %s mode",
-             "DRY RUN" if args.dry_run else "LIVE")
+
+    # Fail closed. Sending needs the flag AND the environment variable, so a
+    # missed checkbox or a typo results in silence rather than surprise.
+    sending = args.live and config.LIVE_ALERTS and not args.dry_run
+    if args.live and not config.LIVE_ALERTS:
+        log.warning("--live passed but SURGEON_LIVE is not 'true' — staying dry")
+    args.dry_run = not sending
+    log.info("surgeon scan starting — %s", "LIVE (sending)" if sending else "DRY RUN")
 
     if not store.live:
         log.warning("no database — dedupe and positions will not persist")
@@ -217,6 +239,10 @@ def main() -> int:
         print(f"  {config.CHAINS[r.chain]['display']:<18} "
               f"found {r.discovered:>3}  scored {r.evaluated:>3}  "
               f"alerts {r.alerted:>2}   {reasons}")
+        if r.gate_fails:
+            worst = sorted(r.gate_fails.items(), key=lambda x: -x[1])[:5]
+            print("        blocked by: " +
+                  ", ".join(f"{k}×{v}" for k, v in worst))
     print("-" * 62)
     print(f"  {total_alerts} alert(s) in {time.time() - started:.0f}s")
     print("=" * 62)

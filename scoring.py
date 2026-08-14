@@ -153,8 +153,13 @@ def classify_tier(m: TokenMarket, chain: str,
     for tier in ("first_moon", "second_moon", "boosted"):
         t = config.thresholds_for(chain, tier)
         min_chg = t["min_change_1h"] * adj["min_change_1h_mult"]
-        min_vol = t["min_volume_24h"] * adj["min_volume_mult"]
+        min_vol = t["min_volume_1h"] * adj["min_volume_mult"]
         fails = []
+
+        # Under an hour old there is no separate hourly figure — the 24h
+        # number is the token's whole life, so it is the honest fallback.
+        vol_1h = m.volume_1h if m.volume_1h > 0 else m.volume_24h
+        turnover = (vol_1h / m.liquidity_usd) if m.liquidity_usd > 0 else 0.0
 
         if m.liquidity_usd < t["min_liquidity"]:
             fails.append(f"liq ${m.liquidity_usd:,.0f} < ${t['min_liquidity']:,}")
@@ -168,8 +173,10 @@ def classify_tier(m: TokenMarket, chain: str,
                 fails.append(f"age {m.age_hours:.2f}h > {t['max_age_hours']}h")
         if m.change_1h < min_chg:
             fails.append(f"1h {m.change_1h:.1f}% < {min_chg:.1f}%")
-        if m.volume_24h < min_vol:
-            fails.append(f"vol ${m.volume_24h:,.0f} < ${min_vol:,.0f}")
+        if vol_1h < min_vol:
+            fails.append(f"vol1h ${vol_1h:,.0f} < ${min_vol:,.0f}")
+        if turnover < t["min_turnover_1h"]:
+            fails.append(f"turnover {turnover:.2f}x < {t['min_turnover_1h']}x")
         if m.change_5m < t["min_change_5m"]:
             fails.append(f"5m {m.change_5m:.1f}% < {t['min_change_5m']}% (dumping)")
 

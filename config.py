@@ -13,6 +13,8 @@ import os
 HELIUS_API_KEY      = os.getenv("HELIUS_API_KEY", "")
 GOPLUS_APP_KEY      = os.getenv("GOPLUS_APP_KEY", "")      # optional, raises rate limit
 GOPLUS_APP_SECRET   = os.getenv("GOPLUS_APP_SECRET", "")   # optional
+# Sending is opt-in. A missing or mistyped flag must fail closed, not open.
+LIVE_ALERTS         = os.getenv("SURGEON_LIVE", "").lower() == "true"
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "")
 SUPABASE_URL        = os.getenv("SUPABASE_URL", "")
@@ -100,57 +102,59 @@ def enabled_chains():
 # ── ENTRY THRESHOLDS ──────────────────────────────────────────────
 # Per-tier gates. Chain overrides go in CHAIN_THRESHOLD_OVERRIDES.
 THRESHOLDS = {
+    # Volume is gated on the last hour plus turnover, never on 24h totals.
+    # For a token minutes old, "24h volume" is lifetime volume — a $50k floor
+    # demanded $50k of trade in twelve minutes and rejected genuine runners.
     "first_moon": {
-        "min_liquidity":  10_000,
-        "min_fdv":        20_000,
-        "max_fdv":        100_000,
-        "min_age_hours":  0.17,    # 10min — survived the instant-rug window
-        "max_age_hours":  2.0,
-        "min_change_1h":  20.0,
-        "min_volume_24h": 50_000,
-        "min_change_5m":  -10.0,   # buy pressure gate
+        "min_liquidity":   5_000,
+        "min_fdv":         5_000,
+        "max_fdv":       150_000,
+        "min_age_hours":     0.17,   # 10min — past the instant-rug window
+        "max_age_hours":     2.0,
+        "min_change_1h":    15.0,
+        "min_volume_1h":   3_000,
+        "min_turnover_1h":   0.15,   # hourly volume / liquidity
+        "min_change_5m":   -10.0,
     },
     "second_moon": {
-        "min_liquidity":  25_000,
-        "min_fdv":        150_000,
-        "max_fdv":        3_000_000,
-        "min_age_hours":  0.17,
-        "max_age_hours":  12.0,
-        "min_change_1h":  10.0,
-        "min_volume_24h": 75_000,
-        "min_change_5m":  -10.0,
-    },
-    "boosted": {
         "min_liquidity":  20_000,
-        "min_fdv":        50_000,
-        "max_fdv":        5_000_000,
-        "min_age_hours":  0.17,
-        "max_age_hours":  24.0,
-        "min_change_1h":  0.0,
-        "min_volume_24h": 30_000,
-        "min_change_5m":  -15.0,
+        "min_fdv":       100_000,
+        "max_fdv":     3_000_000,
+        "min_age_hours":     0.17,
+        "max_age_hours":    12.0,
+        "min_change_1h":    10.0,
+        "min_volume_1h":  15_000,
+        "min_turnover_1h":   0.10,
+        "min_change_5m":   -10.0,
+    },
+    # Catch-all so a token cannot fall between tiers: first_moon stops at 2h
+    # and second_moon needs $100k FDV, which left a 3h-old $60k token matching
+    # nothing at all.
+    "boosted": {
+        "min_liquidity":  10_000,
+        "min_fdv":        20_000,
+        "max_fdv":     5_000_000,
+        "min_age_hours":     0.17,
+        "max_age_hours":    24.0,
+        "min_change_1h":     0.0,
+        "min_volume_1h":   5_000,
+        "min_turnover_1h":   0.05,
+        "min_change_5m":   -15.0,
     },
 }
 
-# Newer / thinner chains need looser absolute dollar gates.
 # Newer chains trade at a fraction of Solana's dollar sizes. REDDIT on
 # Robinhood was a real 321%-in-an-hour move on $7.8k liquidity and an $8k
 # FDV — invisible to Solana-calibrated floors.
 CHAIN_THRESHOLD_OVERRIDES = {
     "robinhood": {
-        "first_moon":  {"min_liquidity": 4_000, "min_fdv": 5_000,
-                        "max_fdv": 100_000, "min_volume_24h": 8_000},
-        "second_moon": {"min_liquidity": 10_000, "min_fdv": 50_000,
-                        "min_volume_24h": 25_000},
+        "first_moon": {"min_liquidity": 3_000, "min_volume_1h": 1_500},
+        "boosted":    {"min_liquidity": 5_000, "min_volume_1h": 2_000},
     },
     "monad": {
-        "first_moon":  {"min_liquidity": 4_000, "min_fdv": 5_000,
-                        "min_volume_24h": 8_000},
-        "second_moon": {"min_liquidity": 10_000, "min_fdv": 50_000,
-                        "min_volume_24h": 20_000},
+        "first_moon": {"min_liquidity": 3_000, "min_volume_1h": 1_500},
+        "boosted":    {"min_liquidity": 5_000, "min_volume_1h": 2_000},
     },
-    "base": {"first_moon": {"min_fdv": 10_000, "min_volume_24h": 25_000}},
-    "bsc":  {"first_moon": {"min_fdv": 10_000, "min_volume_24h": 25_000}},
 }
 
 def thresholds_for(chain: str, tier: str) -> dict:

@@ -210,6 +210,44 @@ def test_social():
     check("single channel excluded", "B" in vel, False)
 
 
+def test_tiers():
+    """
+    Tier gates against real profiles from live runs.
+
+    Volume is measured over the last hour, not 24h. A token twelve minutes
+    old has a "24h volume" equal to its entire life, so a $50k 24h floor was
+    demanding $50k of trade in twelve minutes and rejecting real runners.
+    """
+    print("\ntier gates")
+    cases = [
+        # name, chain, liq, fdv, vol, chg1h, chg5m, age, should_match
+        ("REDDIT rh",     "robinhood", 7833,  8115,      12853,  321,    6.6,    0.2, True),
+        ("FomoMining rh", "robinhood", 20848, 19153,     34075,  227,   -3.3,    0.2, True),
+        ("Korea Robot",   "solana",    70170, 70879,     12573,  46,     46,     0.2, True),
+        ("mid runner",    "solana",    45000, 190000,    210000, 85,     12,     1.5, True),
+        ("3h old $60k",   "solana",    30000, 60000,     90000,  40,     5,      3.0, True),
+        ("thin volume",   "solana",    13339, 6891,      2057,   6.5,    6.5,    0.2, False),
+        ("dead $14 liq",  "monad",     14,    7722756,   2,      0,      0,      3.7, False),
+        ("SKYAI garbage", "bsc",       14173, 819649865, 7086,   1.3e12, 1.3e12, 0.07, False),
+    ]
+    for name, chain, liq, fdv, vol, c1h, c5m, agehr, want in cases:
+        m = TokenMarket(ca="x", chain=chain, name=name, symbol="X",
+                        liquidity_usd=liq, fdv=fdv, volume_24h=vol,
+                        volume_1h=vol, change_1h=c1h, change_5m=c5m,
+                        age_hours=agehr, age_known=True, dex="uniswap")
+        r = scoring.classify_tier(m, chain, session="NORMAL")
+        check(f"{name} matches a tier", r.matched, want)
+
+    # No coverage hole between tiers: first_moon stops at 2h, second_moon
+    # needs $100k FDV, so a 3h-old $60k token must land in boosted.
+    gap = TokenMarket(ca="g", chain="solana", name="gap", symbol="G",
+                      liquidity_usd=30000, fdv=60000, volume_24h=90000,
+                      volume_1h=90000, change_1h=40, change_5m=5,
+                      age_hours=3.0, age_known=True, dex="raydium")
+    check("inter-tier gap covered by boosted",
+          scoring.classify_tier(gap, "solana", session="NORMAL").tier, "boosted")
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -279,6 +317,7 @@ def main():
     test_alerts()
     test_store()
     test_social()
+    test_tiers()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
