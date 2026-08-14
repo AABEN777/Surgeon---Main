@@ -278,11 +278,24 @@ def test_watchlist():
           park(mk(0.04, fdv=819_649_865, vol=100)), False)
     check("too old not parked", park(mk(48)), False)
 
+    import time as _t
     s = store_mod.Store(url="", key="")
-    s.watch_later("w", "solana", 0.04, "W", "W")
-    check("parked token stored", len(s.due_for_recheck()), 1)
-    s.drop_from_watchlist("w")
-    check("dropped after revival", len(s.due_for_recheck()), 0)
+    now = _t.time()
+    # Re-checking a token that is still inside the delay window spends a rate
+    # limit to rediscover what we already knew.
+    s.upsert("watchlist", {"ca": "young", "chain": "solana",
+                           "first_seen": now - 120, "first_age_hours": 0.05},
+             on_conflict="ca")
+    s.upsert("watchlist", {"ca": "ready", "chain": "solana",
+                           "first_seen": now - 1200, "first_age_hours": 0.05},
+             on_conflict="ca")
+    s.upsert("watchlist", {"ca": "recent", "chain": "solana",
+                           "first_seen": now - 1200, "first_age_hours": 0.05,
+                           "last_checked": now - 30}, on_conflict="ca")
+    due = [r["ca"] for r in s.due_for_recheck()]
+    check("only matured tokens re-checked", due, ["ready"])
+    s.drop_from_watchlist("ready")
+    check("dropped after revival", [r["ca"] for r in s.due_for_recheck()], [])
 
 
 def main():

@@ -98,7 +98,9 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
     rows = store.due_for_recheck()
     if not rows:
         return {}
-    log.info("re-checking %d parked tokens", len(rows))
+    log.info("re-checking %d matured tokens (of %d parked)",
+             len(rows), len(store.select("watchlist", {"select": "ca",
+                                                       "limit": "500"})))
 
     revived: dict[str, int] = {}
     for row in rows:
@@ -128,9 +130,11 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                 store.bump_check(ca, int(row.get("checks") or 0))
                 continue
 
-            log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh",
-                     chain, market.name, market.symbol, ev.tier.tier,
-                     ev.conviction.score, float(row.get("first_age_hours") or 0))
+            log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh, "
+                     "now %.2fh", chain, market.name, market.symbol,
+                     ev.tier.tier, ev.conviction.score,
+                     float(row.get("first_age_hours") or 0),
+                     float(row.get("_age_now") or market.age_hours))
 
             if not dry_run:
                 res = alerts.send_signal(ev, adapter)

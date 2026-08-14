@@ -278,21 +278,44 @@ class Store:
             "checks": 0,
         }, on_conflict="ca")
 
-    def due_for_recheck(self, max_age_hours: float = 6.0) -> list[dict]:
+    def due_for_recheck(self, max_age_hours: float = 6.0,
+                        min_age_hours: Optional[float] = None,
+                        recheck_gap_seconds: int = 240,
+                        limit: int = 20) -> list[dict]:
         """
-        Entries old enough to qualify now, and not yet stale.
+        Parked tokens that have actually aged into range.
 
-        max_age is generous — a token that was two minutes old at discovery
-        has hours of runway before it stops being interesting.
+        Maturity is computed rather than assumed: a token parked at 0.03h two
+        minutes ago is still too young, and re-fetching it only spends a rate
+        limit to learn what we already knew. Oldest first, so nothing starves.
         """
-        cutoff = time.time() - max_age_hours * 3600
+        if min_age_hours is None:
+            min_age_hours = config.THRESHOLDS["first_moon"]["min_age_hours"]
+
+        now = time.time()
+        cutoff = now - max_age_hours * 3600
         rows = self.select("watchlist", {
             "select": "*",
             "first_seen": f"gte.{cutoff}",
             "order": "first_seen.asc",
-            "limit": "150",
+            "limit": "200",
         })
-        return rows
+
+        due = []
+        for r in rows:
+            first_seen = float(r.get("first_seen") or 0)
+            born_at = first_seen - float(r.get("first_age_hours") or 0) * 3600
+            age_now = (now - born_at) / 3600
+            if age_now < min_age_hours:
+                continue                      # still inside the delay window
+            last = float(r.get("last_checked") or 0)
+            if last and (now - last) < recheck_gap_seconds:
+                continue                      # checked moments ago
+            r["_age_now"] = round(age_now, 3)
+            due.append(r)
+            if len(due) >= limit:
+                break
+        return due
 
     def drop_from_watchlist(self, ca: str):
         if not self.live:
