@@ -224,7 +224,9 @@ CONVICTION = {
     "smart_money":{2: 20, 1: 12},                        # unique wallets
     "unverified": -25,
     "partial_safety": -8,
-    "macro":      {"BULLISH": 5, "NEUTRAL": 0, "CAUTION": -10, "PAUSE": -10},
+    # A bleeding tape is not a small deduction. The same setup that is worth
+    # taking with SOL up 8% is usually worth skipping with SOL down 12%.
+    "macro":      {"BULLISH": 6, "NEUTRAL": 0, "CAUTION": -12, "PAUSE": -25},
     "min_to_alert": 30,
     "bands": {"HIGH": 80, "GOOD": 60, "WATCH": 30},
 }

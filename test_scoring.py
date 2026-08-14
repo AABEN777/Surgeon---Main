@@ -373,6 +373,45 @@ def test_watchlist():
           [r["ca"] for r in s.due_for_recheck()], [])
 
 
+def test_context_inputs():
+    """
+    Social consensus, smart money and macro regime were all silently absent:
+    social_counts was only populated when scraping ran in the same process,
+    smart_wallets was hardcoded to 0, and macro was always NEUTRAL. Together
+    that is up to forty points of conviction that never once applied, which
+    is why nothing ever reached the HIGH band.
+    """
+    print("\ncontext inputs")
+    m = TokenMarket(ca="c", chain="solana", name="Neural Agent", symbol="NAG",
+                    liquidity_usd=45000, fdv=190000, volume_24h=210000,
+                    volume_1h=180000, change_1h=85, change_5m=12,
+                    buys_5m=210, sells_5m=64, age_hours=0.9, age_known=True,
+                    dex="raydium")
+    s = SafetyReport(ca="c", chain="solana", sources=["rugcheck"],
+                     top_holder_pct=6.2, lp_locked_pct=100.0, risk_raw=1.0)
+
+    bare = scoring.conviction_score(m, s, 0, 0, "NEUTRAL", session="NORMAL")
+    social = scoring.conviction_score(m, s, 3, 0, "NEUTRAL", session="NORMAL")
+    smart = scoring.conviction_score(m, s, 0, 2, "NEUTRAL", session="NORMAL")
+    check_true("social consensus raises score", social.score > bare.score)
+    check_true("smart money raises score", smart.score > bare.score)
+    check_true("social reaches HIGH band", social.band == "HIGH")
+
+    # Macro must be able to change the decision, not just the number.
+    mid = TokenMarket(ca="d", chain="base", name="Frog crazy", symbol="FROG",
+                      liquidity_usd=18000, fdv=40000, volume_24h=26000,
+                      volume_1h=22000, change_1h=48, change_5m=9,
+                      buys_5m=34, sells_5m=21, age_hours=0.6, age_known=True,
+                      dex="uniswap")
+    ms = SafetyReport(ca="d", chain="base", sources=["goplus"], honeypot=False,
+                      unavailable=["top_holder_pct"])
+    bull = scoring.conviction_score(mid, ms, 0, 0, "BULLISH", session="NORMAL")
+    pause = scoring.conviction_score(mid, ms, 0, 0, "PAUSE", session="NORMAL")
+    check_true("bull tape alerts", bull.alertable)
+    check_true("bleeding tape skips the same setup", not pause.alertable)
+    check_true("macro appears in the breakdown", "macro:PAUSE" in pause.explain())
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -444,6 +483,7 @@ def main():
     test_social()
     test_tiers()
     test_watchlist()
+    test_context_inputs()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

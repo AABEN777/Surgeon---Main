@@ -24,6 +24,7 @@ import chain_base
 import scoring
 import alerts
 import social
+import smartmoney
 from store import store
 
 logging.basicConfig(
@@ -106,7 +107,8 @@ def _worth_parking(tier_result, market) -> bool:
 
 
 def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
-                      already: dict[str, float]) -> dict[str, int]:
+                      already: dict[str, float],
+                      macro: str = "NEUTRAL") -> dict[str, int]:
     """
     Re-evaluate parked tokens that have now aged into range.
 
@@ -163,8 +165,11 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                     continue
 
                 safety = adapter.safety(ca, market.pair_address)
-                ev = scoring.evaluate(market, safety, chain,
-                                      social_channels=social_counts.get(ca, 0))
+                ev = scoring.evaluate(
+                    market, safety, chain,
+                    social_channels=social_counts.get(ca, 0),
+                    smart_wallets=smartmoney.recent_buys(chain, store).get(ca, 0),
+                    macro=macro)
                 ev.from_watchlist = True
                 if not ev.should_alert:
                     store.bump_check(ca, int(row.get("checks") or 0))
@@ -219,6 +224,29 @@ def portfolio_blocked() -> tuple[bool, str]:
     return False, ""
 
 
+def load_social_counts() -> dict[str, int]:
+    """
+    {ca: unique channels} from stored mentions.
+
+    Reading is one query and must happen on every scan. Scraping is slow and
+    runs on its own cadence — but the scan was only reading counts when it
+    also scraped, so every signal scored with social=0 and the twenty-point
+    consensus bonus never once applied.
+    """
+    rows = store.recent_mentions()
+    by_ca: dict[str, set] = {}
+    for row in rows:
+        ca, ch = row.get("ca"), row.get("channel")
+        if ca and ch:
+            by_ca.setdefault(ca, set()).add(ch)
+    counts = {ca: len(chs) for ca, chs in by_ca.items()}
+    hot = sum(1 for n in counts.values() if n >= config.VELOCITY_MIN_CHANNELS)
+    if counts:
+        log.info("social: %d tokens mentioned, %d with cross-channel consensus",
+                 len(counts), hot)
+    return counts
+
+
 def refresh_social() -> dict[str, int]:
     """Scrape channels, persist mentions, return {ca: unique channel count}."""
     log.info("scraping %d channels", len(config.TELEGRAM_CHANNELS))
@@ -232,28 +260,17 @@ def refresh_social() -> dict[str, int]:
             for m in mentions
         ])
 
-    stored = store.recent_mentions()
-    by_ca: dict[str, set] = {}
-    for row in stored:
-        ca = row.get("ca")
-        ch = row.get("channel")
-        if ca and ch:
-            by_ca.setdefault(ca, set()).add(ch)
-
-    counts = {ca: len(chs) for ca, chs in by_ca.items()}
-    hot = {ca: n for ca, n in counts.items()
-           if n >= config.VELOCITY_MIN_CHANNELS}
-    if hot:
-        log.info("cross-channel consensus on %d tokens", len(hot))
-    return counts
+    return load_social_counts()
 
 
 def scan_chain(chain: str, social_counts: dict[str, int],
                dry_run: bool = False, limit: int = 40,
-               already: dict[str, float] | None = None) -> ChainRun:
+               already: dict[str, float] | None = None,
+               macro: str = "NEUTRAL") -> ChainRun:
     run = ChainRun(chain=chain)
     adapter = chains.get_adapter(chain)
     already = already if already is not None else {}
+    smart = smartmoney.recent_buys(chain, store)
     park_budget = max(0, MAX_WATCHLIST_PER_CHAIN - store.watchlist_size(chain))
     if park_budget == 0:
         log.info("[%s] watchlist full — parking paused this scan", chain)
@@ -296,7 +313,8 @@ def scan_chain(chain: str, social_counts: dict[str, int],
             ev = scoring.evaluate(
                 market, safety, chain,
                 social_channels=social_counts.get(ca, 0),
-                smart_wallets=0,
+                smart_wallets=smart.get(ca, 0),
+                macro=macro,
             )
             run.evaluated += 1
 
@@ -373,7 +391,8 @@ def main() -> int:
         log.warning("scan skipped: %s", why)
         return 0
 
-    social_counts = refresh_social() if args.social else {}
+    macro = smartmoney.macro_regime()
+    social_counts = refresh_social() if args.social else load_social_counts()
     already = store.recently_alerted()
     if already:
         log.info("%d tokens inside re-alert cooldown", len(already))
@@ -382,14 +401,14 @@ def main() -> int:
     if purged:
         log.info("purged %d stale watchlist entries", purged)
 
-    revived = revisit_watchlist(social_counts, args.dry_run, already)
+    revived = revisit_watchlist(social_counts, args.dry_run, already, macro)
 
     targets = [args.chain] if args.chain else config.enabled_chains()
     runs = []
     for chain in targets:
         try:
             runs.append(scan_chain(chain, social_counts, args.dry_run,
-                                   args.limit, already))
+                                   args.limit, already, macro))
         except Exception as e:
             log.error("[%s] scan crashed: %s", chain, e)
 

@@ -52,14 +52,7 @@ chain_solana.py           RugCheck + Helius
 chain_evm.py              GoPlus + Blockscout — serves all four EVM chains
 chains.py                 registry, address routing, chain resolution
 discover_chain_ids.py     one-time identifier resolution
-scoring.py                tiers, momentum, narrative, conviction — chain-blind
-alerts.py                 Telegram formatting + delivery (HTML, escaped)
-store.py                  Supabase persistence, in-memory fallback
-social.py                 Telegram scraping + cross-channel velocity
-scan.py                   scanner entrypoint — cron runs this
-schema.sql                paste into Supabase SQL editor
-test_adapters.py          adapter smoke test (network)
-test_scoring.py           scoring unit tests (offline)
+test_adapters.py          smoke test
 ```
 
 ## Design rules
@@ -74,3 +67,10 @@ test_scoring.py           scoring unit tests (offline)
    second-moon signal.
 4. **Deepest pool wins.** Market data comes from the deepest pair, and a CA
    deployed on several EVM chains resolves to wherever the liquidity is.
+
+## What is next
+
+See `ROADMAP.md`. The next build is the position watcher, because outcome
+tracking is what unlocks derived smart money, channel accuracy scoring and
+narrative retuning — all of which are currently blocked on not knowing which
+signals were right.
