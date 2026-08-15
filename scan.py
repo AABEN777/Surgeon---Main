@@ -415,12 +415,18 @@ def main() -> int:
     print("\n" + "=" * 62)
     print("SCAN SUMMARY")
     print("=" * 62)
+    # Revivals are alerts too — the per-chain line counted them, the total
+    # did not, so a scan that produced three signals reported zero.
     total_alerts = 0
+    total_parked = 0
+    total_revived = 0
     for r in runs:
-        total_alerts += r.alerted
+        rev = revived.get(r.chain, 0)
+        total_alerts += r.alerted + rev
+        total_parked += r.parked
+        total_revived += rev
         top = sorted(r.rejects.items(), key=lambda x: -x[1])[:3]
         reasons = ", ".join(f"{k}×{v}" for k, v in top) or "-"
-        rev = revived.get(r.chain, 0)
         print(f"  {config.CHAINS[r.chain]['display']:<18} "
               f"found {r.discovered:>3}  scored {r.evaluated:>3}  "
               f"alerts {r.alerted + rev:>2}  parked {r.parked:>3}"
@@ -430,7 +436,11 @@ def main() -> int:
             print("        blocked by: " +
                   ", ".join(f"{k}×{v}" for k, v in worst))
     print("-" * 62)
-    print(f"  {total_alerts} alert(s) in {time.time() - started:.0f}s")
+    detail = f"  {total_alerts} alert(s)"
+    if total_revived:
+        detail += f" ({total_revived} from the watchlist)"
+    detail += f"  ·  {total_parked} newly parked  ·  {time.time() - started:.0f}s"
+    print(detail)
     print("=" * 62)
     return 0
 

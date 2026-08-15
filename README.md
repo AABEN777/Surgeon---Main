@@ -70,7 +70,6 @@ test_adapters.py          smoke test
 
 ## What is next
 
-See `ROADMAP.md`. The next build is the position watcher, because outcome
-tracking is what unlocks derived smart money, channel accuracy scoring and
-narrative retuning — all of which are currently blocked on not knowing which
-signals were right.
+See `ROADMAP.md`. The position watcher is built, so outcomes now accumulate.
+Next is derived smart money: promote wallets that were early in Surgeon's
+own winners, rather than trusting a hand-researched list.

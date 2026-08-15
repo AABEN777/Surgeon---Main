@@ -22,22 +22,22 @@ better signals and knowing which ones were right.
 
 ---
 
-## 1. Position watcher — *next*
+## 1. Position watcher — BUILT
 
-Everything downstream depends on knowing how signals turned out.
+`watch.py`. Tracks every alerted token and notifies on TP1/TP2/TP3, stop,
+trailing stop after TP2, volume fade, whale concentration appearing after
+entry, bonding-curve graduation, time stops and max hold.
 
-Track every alerted token and notify on: TP1 +50%, TP2 +100%, TP3 +200%,
-stop −15%, trailing −20% after TP2, volume fade, dev wallet sold, whale
-concentration appearing, bonding curve graduation, time stops.
+Outcomes are graded on both final and peak PnL: a token that ran 300% and
+gave it back was a correct call badly exited, and grading that as a loss
+would poison every weight learned from this data.
 
-Writes outcomes back to `signals`, which is what turns the whole system from
-a scanner into something that learns.
+Results land in `signals`, which unblocks items 2, 4 and 5.
 
-**Blocks:** items 2, 4, 5 and the go-live decision.
+Still to wire: dev-wallet-sold needs the creator's holding recorded at
+signal time to compare against.
 
----
-
-## 2. Derived smart money
+## 2. Derived smart money — NEXT
 
 The wallets currently tracked were hand-researched on a machine that no
 longer exists, and nothing has verified they are still any good. Third-party

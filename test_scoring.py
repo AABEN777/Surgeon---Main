@@ -412,6 +412,71 @@ def test_context_inputs():
     check_true("macro appears in the breakdown", "macro:PAUSE" in pause.explain())
 
 
+def test_watcher():
+    """
+    Position outcomes. Three roadmap items — derived smart money, channel
+    accuracy and narrative retuning — are all blocked on knowing which
+    signals were right, which is what these events produce.
+    """
+    import watch, time as _t
+    print("\nposition watcher")
+
+    # Peak matters as well as the close: a token that ran 300% and gave it
+    # back was a correct call badly exited, not a bad signal.
+    check("ran 260% then faded is still MOON",
+          watch.classify_outcome(10, 260), "MOON")
+    check("held 120% is BIG_WIN", watch.classify_outcome(120, 150), "BIG_WIN")
+    check("closed red is LOSS", watch.classify_outcome(-40, 5), "LOSS")
+
+    now = _t.time()
+
+    def row(entry=1.0, peak=None, hours=0.5):
+        return {"ca": "x", "chain": "solana", "name": "T", "symbol": "T",
+                "entry_price": entry, "peak_price": peak or entry,
+                "alerted_at": now - hours * 3600}
+
+    def mkt(price, **kw):
+        base = dict(ca="x", chain="solana", name="T", symbol="T",
+                    price_usd=price, liquidity_usd=40000, fdv=60000,
+                    volume_1h=24000, volume_5m=2000, dex="raydium")
+        base.update(kw)
+        return TokenMarket(**base)
+
+    def events(r, m, fired=None, safety=None):
+        return [e for e, _ in watch.evaluate_position(
+            r, m, None, fired or set(), safety)]
+
+    check_true("TP1 fires at +55%", "TP1" in events(row(), mkt(1.55)))
+    check_true("stop fires at -20%", "STOP_LOSS" in events(row(), mkt(0.80)))
+    check_true("trailing stop after TP2",
+               "TRAIL_STOP" in events(row(peak=3.0), mkt(2.2), {"TP1", "TP2"}))
+    check_true("volume fade while in profit",
+               "VOLUME_FADE" in events(row(), mkt(1.30, volume_5m=100)))
+    check("healthy position fires nothing", events(row(), mkt(1.20)), [])
+
+    # Whale concentration that appears after entry is a different thing from
+    # concentration that was there all along — the latter blocks the signal.
+    late_whale = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                              top_holder_pct=41.0)
+    check_true("whale appearing after entry",
+               "WHALE_STOP" in events(row(hours=3), mkt(1.45),
+                                      safety=late_whale))
+
+    # FDV over the graduation threshold is meaningless off a bonding curve,
+    # and firing it everywhere suppressed legitimate time stops.
+    on_curve = mkt(1.05, dex="pumpfun", launchpad="pumpfun", fdv=70000)
+    ev = events(row(hours=5), on_curve)
+    check_true("graduation holds an on-curve token",
+               "GRADUATION" in ev and "TIME_STOP" not in ev)
+    check_true("no graduation once trading on an AMM",
+               "GRADUATION" not in events(row(hours=5),
+                                          mkt(1.05, dex="pumpswap",
+                                              launchpad="pumpfun", fdv=70000)))
+    check_true("no graduation on chains without curves",
+               "GRADUATION" not in events(row(hours=5),
+                                          mkt(1.05, dex="uniswap", fdv=70000)))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -484,6 +549,7 @@ def main():
     test_tiers()
     test_watchlist()
     test_context_inputs()
+    test_watcher()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
