@@ -39,6 +39,10 @@ MAX_PARK_PER_SCAN = 60
 # Ceiling per chain. Inflow far exceeds re-check throughput, so without this
 # the queue grows faster than it drains and fresh tokens starve behind stale.
 MAX_WATCHLIST_PER_CHAIN = 400
+# Per-token GeckoTerminal lookups are throttled at 3s each. A handful is
+# worth it for pools DexScreener has not indexed; forty is four minutes of
+# a scan spent on tokens that will be rediscovered next cycle anyway.
+MAX_GT_FALLBACKS_PER_CHAIN = 8
 
 
 @dataclass
@@ -300,10 +304,16 @@ def scan_chain(chain: str, social_counts: dict[str, int],
     run.reject_bulk("cooldown", len(candidates) - len(fresh))
 
     scored: list[tuple[float, str, object]] = []
+    gt_used = 0
     for ca in fresh:
         m = markets.get(ca)
         if not m or not m.ok:
-            # Not indexed yet — GeckoTerminal may still have it.
+            # Not indexed yet — GeckoTerminal may still have it, but only a
+            # few are worth the throttle. The rest reappear next scan.
+            if gt_used >= MAX_GT_FALLBACKS_PER_CHAIN:
+                run.reject("market:not_indexed")
+                continue
+            gt_used += 1
             alt = chain_base.geckoterminal_market(
                 ca, chain, config.CHAINS[chain].get("geckoterminal_id"))
             if alt.ok and alt.liquidity_usd > 0:
