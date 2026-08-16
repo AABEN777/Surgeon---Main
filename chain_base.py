@@ -341,11 +341,16 @@ def dexscreener_discover(chain_id: str) -> list[str]:
     return found
 
 
-def geckoterminal_market(ca: str, chain: str, network: str) -> TokenMarket:
+def geckoterminal_market(ca: str, chain: str, network: str,
+                         cached_only: bool = False) -> TokenMarket:
     """
     Market snapshot from GeckoTerminal. Used when DexScreener has not indexed
     a pool yet — which is common for exactly the pools we care about most,
     the ones a few minutes old.
+
+    Discovery already caches the full pool payload for everything it returns,
+    so most of these resolve without a request. cached_only refuses to make
+    one, which lets a caller take the free answers and ration the rest.
     """
     if not network:
         return TokenMarket(ca=ca, chain=chain, ok=False, error="no_gt_network")
@@ -354,6 +359,9 @@ def geckoterminal_market(ca: str, chain: str, network: str) -> TokenMarket:
     hit = _GT_POOL_CACHE.get((network, ca))
     if hit and (time.time() - hit[0]) < _GT_POOL_TTL:
         pool = hit[1]
+    elif cached_only:
+        # Caller is rationing live requests; say so rather than spending one.
+        return TokenMarket(ca=ca, chain=chain, ok=False, error="gt_not_cached")
     else:
         _GT_THROTTLE.wait()
         data = http_get(f"{GT_BASE}/networks/{network}/tokens/{ca}/pools",

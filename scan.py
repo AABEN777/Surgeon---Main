@@ -308,18 +308,19 @@ def scan_chain(chain: str, social_counts: dict[str, int],
     for ca in fresh:
         m = markets.get(ca)
         if not m or not m.ok:
-            # Not indexed yet — GeckoTerminal may still have it, but only a
-            # few are worth the throttle. The rest reappear next scan.
-            if gt_used >= MAX_GT_FALLBACKS_PER_CHAIN:
-                run.reject("market:not_indexed")
-                continue
-            gt_used += 1
-            alt = chain_base.geckoterminal_market(
-                ca, chain, config.CHAINS[chain].get("geckoterminal_id"))
+            gt_network = config.CHAINS[chain].get("geckoterminal_id")
+            # Discovery cached the pool payload for everything it returned,
+            # so try that first — it costs nothing.
+            alt = chain_base.geckoterminal_market(ca, chain, gt_network,
+                                                  cached_only=True)
+            if not alt.ok and gt_used < MAX_GT_FALLBACKS_PER_CHAIN:
+                gt_used += 1
+                alt = chain_base.geckoterminal_market(ca, chain, gt_network)
             if alt.ok and alt.liquidity_usd > 0:
                 m = alt
             else:
-                run.reject(f"market:{(m.error if m else 'missing')}")
+                run.reject("market:not_indexed" if not alt.ok
+                           else f"market:{alt.error}")
                 continue
         # Old enough to judge goes first; the rest are parking candidates.
         min_age = config.thresholds_for(chain, "first_moon")["min_age_hours"]
