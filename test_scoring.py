@@ -461,6 +461,25 @@ def test_watcher():
                                          {"STOP_WARN", "TP1"}))
     check_true("STOP_WARN keeps the position open",
                "STOP_WARN" not in watch.TERMINAL)
+
+    # A near-zero entry price produced readings in the millions — seven rows
+    # put average final PnL at 124 million percent. Returning None rather
+    # than clamping matters: a clamped number is a fabricated outcome, and
+    # every weight we later learn is learned from these rows.
+    check("normal move measured", round(watch._pnl(1.0, 1.5)), 50)
+    check("near-zero entry rejected", watch._pnl(1e-12, 0.02), None)
+    check("zero entry rejected", watch._pnl(0.0, 1.0), None)
+    check("impossible gain rejected", watch._pnl(1.0, 500.0), None)
+    check("untrustworthy pricing judges nothing",
+          events(row(), TokenMarket(ca="x", chain="solana", name="T",
+                                    symbol="T", price_usd=0.02,
+                                    liquidity_usd=40000, fdv=60000,
+                                    volume_1h=24000, dex="raydium"),
+                 fired=set()) if False else
+          watch.evaluate_position({"ca": "x", "entry_price": 1e-12,
+                                   "peak_price": 1e-12,
+                                   "alerted_at": now - 600},
+                                  mkt(0.02), None, set(), None), [])
     check_true("trailing stop after TP2",
                "TRAIL_STOP" in events(row(peak=3.0), mkt(2.2), {"TP1", "TP2"}))
     check_true("volume fade while in profit",

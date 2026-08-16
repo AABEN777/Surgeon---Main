@@ -432,7 +432,8 @@ class Store:
         })
 
     def stats(self) -> dict:
-        closed = self.closed_trades()
+        closed = [t for t in self.closed_trades()
+                  if str(t.get("outcome", "")).upper() != "DATA_ERROR"]
         if not closed:
             return {"trades": 0, "wins": 0, "win_rate": 0.0}
         wins = [t for t in closed

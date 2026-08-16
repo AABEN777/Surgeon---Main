@@ -329,6 +329,11 @@ WATCH = {
     # A parked token that has failed the gates this many times is not going
     # to turn. Holding it costs a re-check slot a fresher token could use.
     "max_watchlist_checks":   12,
+    # A position cannot lose more than everything, and a reading above this
+    # is a broken entry price rather than a moonshot. Seven such rows put
+    # the average final PnL at 124 million percent.
+    "pnl_floor_pct":       -100.0,
+    "pnl_ceiling_pct":   10_000.0,
 }
 
 # ── DEDUPE ────────────────────────────────────────────────────────

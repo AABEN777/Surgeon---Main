@@ -72,10 +72,20 @@ def classify_outcome(final_pnl: float, peak_pnl: float) -> str:
     return "LOSS"
 
 
-def _pnl(entry: float, current: float) -> float:
-    if entry <= 0:
-        return 0.0
-    return (current - entry) / entry * 100.0
+def _pnl(entry: float, current: float) -> float | None:
+    """
+    Percent change, or None when the inputs cannot be trusted.
+
+    Returning None rather than a number matters: a near-zero entry price
+    produces readings in the millions, and silently clamping them would
+    record a fabricated outcome instead of admitting we do not know.
+    """
+    if entry <= 0 or current < 0:
+        return None
+    pct = (current - entry) / entry * 100.0
+    if pct < config.WATCH["pnl_floor_pct"] or pct > config.WATCH["pnl_ceiling_pct"]:
+        return None
+    return pct
 
 
 def evaluate_position(row: dict, market, adapter, fired: set[str],
@@ -93,8 +103,10 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
         return []
 
     pnl = _pnl(entry, market.price_usd)
+    if pnl is None:
+        return []          # untrustworthy pricing — judge nothing
     peak_price = max(float(row.get("peak_price") or entry), market.price_usd)
-    peak_pnl = _pnl(entry, peak_price)
+    peak_pnl = _pnl(entry, peak_price) or 0.0
     held_hours = (time.time() - float(row.get("alerted_at") or 0)) / 3600
 
     out: list[tuple[str, str]] = []
@@ -212,9 +224,21 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
 
             res.checked += 1
             pnl = _pnl(entry, market.price_usd)
+            if pnl is None:
+                # Close it out of the tracking set, but never let a fabricated
+                # number into the outcome data the weights are learned from.
+                store.close_position(ca, "DATA_ERROR", "BAD_PRICING",
+                                     final_pnl=0.0, peak_pnl=0.0)
+                res.closed += 1
+                res.fire("DATA_ERROR")
+                log.warning("[%s] %s closed as DATA_ERROR — entry %.12f, "
+                            "current %.12f", chain,
+                            row.get("symbol") or ca[:10], entry,
+                            market.price_usd)
+                continue
             peak_price = max(float(row.get("peak_price") or entry),
                              market.price_usd)
-            peak_pnl = _pnl(entry, peak_price)
+            peak_pnl = _pnl(entry, peak_price) or 0.0
 
             fired = store.fired_watch_events(ca)
 
