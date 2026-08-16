@@ -320,7 +320,7 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                 m = alt
             else:
                 run.reject("market:not_indexed" if not alt.ok
-                           else f"market:{alt.error}")
+                           else "market:no_liquidity")
                 continue
         # Old enough to judge goes first; the rest are parking candidates.
         min_age = config.thresholds_for(chain, "first_moon")["min_age_hours"]
