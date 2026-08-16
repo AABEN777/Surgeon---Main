@@ -447,7 +447,20 @@ def test_watcher():
             r, m, None, fired or set(), safety)]
 
     check_true("TP1 fires at +55%", "TP1" in events(row(), mkt(1.55)))
-    check_true("stop fires at -20%", "STOP_LOSS" in events(row(), mkt(0.80)))
+    # Warning and grading are separate. CATCOIN was signalled and stopped out
+    # inside five minutes at -26% with a peak of exactly +0% — closing a
+    # position that young records a verdict we have not earned, and if early
+    # dips do recover it files a correct call as a loss.
+    early = events(row(hours=5 / 60), mkt(0.74))
+    check_true("early dip warns", "STOP_WARN" in early)
+    check_true("early dip does not grade", "STOP_LOSS" not in early)
+    check_true("deep loss past grace does grade",
+               "STOP_LOSS" in events(row(hours=0.5), mkt(0.60), {"STOP_WARN"}))
+    check_true("recovery after an early dip is not a loss",
+               "STOP_LOSS" not in events(row(hours=1.5), mkt(2.2),
+                                         {"STOP_WARN", "TP1"}))
+    check_true("STOP_WARN keeps the position open",
+               "STOP_WARN" not in watch.TERMINAL)
     check_true("trailing stop after TP2",
                "TRAIL_STOP" in events(row(peak=3.0), mkt(2.2), {"TP1", "TP2"}))
     check_true("volume fade while in profit",

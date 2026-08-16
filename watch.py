@@ -36,6 +36,8 @@ log = logging.getLogger("surgeon.watch")
 
 
 # Events that end a position. The rest are milestones along the way.
+# STOP_WARN is deliberately absent: it notifies without ending the position,
+# so we keep observing and find out whether early dips recover.
 TERMINAL = {"STOP_LOSS", "TRAIL_STOP", "DEV_SOLD", "WHALE_STOP",
             "VOLUME_FADE", "TIME_STOP", "MAX_HOLD"}
 
@@ -150,8 +152,16 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
         if drawdown <= W["trail_after_tp2_pct"]:
             out.append(("TRAIL_STOP",
                         f"{drawdown:.0f}% off the peak, closing at {pnl:+.0f}%"))
-    elif pnl <= W["stop_loss_pct"]:
-        out.append(("STOP_LOSS", f"down {pnl:.0f}% since signal"))
+    else:
+        held_minutes = held_hours * 60
+        if pnl <= W["stop_warn_pct"] and "STOP_WARN" not in fired:
+            out.append(("STOP_WARN",
+                        f"down {pnl:.0f}% since signal — still watching"))
+        # Grading waits: a token minutes old swings on ordinary noise, and
+        # closing it as a loss there records a verdict we have not earned.
+        if pnl <= W["stop_loss_pct"] and held_minutes >= W["stop_grace_minutes"]:
+            out.append(("STOP_LOSS",
+                        f"down {pnl:.0f}% after {held_minutes:.0f}m"))
 
     # -- time -------------------------------------------------------
     # Graduation overrides time stops: a token about to graduate is doing

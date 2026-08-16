@@ -305,7 +305,14 @@ WATCH = {
     "tp1_pct":             50,
     "tp2_pct":            100,
     "tp3_pct":            200,
-    "stop_loss_pct":      -15,
+    # Warning and grading are separate jobs. On the VPS they had to be the
+    # same moment because the bot was exiting; signal-only means we can warn
+    # early while the trade is still actionable, then grade once the outcome
+    # is actually settled — and learn whether early dips recover.
+    "stop_warn_pct":      -15,   # notify, keep watching
+    "stop_loss_pct":      -35,   # grade it, stop watching
+    "stop_grace_minutes":  20,   # no grading inside this window, warning only
+
     "trail_after_tp2_pct": -20,
     "time_stop_hours":      2,   # exit alert if still negative
     "time_exit_hours":      4,   # exit alert if still flat

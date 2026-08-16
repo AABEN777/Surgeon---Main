@@ -186,6 +186,7 @@ WATCH_HEADERS = {
     "TP1":          ("🎯", "TP1 HIT"),
     "TP2":          ("🎯", "TP2 HIT"),
     "TP3":          ("🚀", "TP3 HIT"),
+    "STOP_WARN":    ("⚠️", "GOING AGAINST YOU"),
     "STOP_LOSS":    ("🛑", "STOP LOSS"),
     "TRAIL_STOP":   ("🛑", "TRAILING STOP"),
     "VOLUME_FADE":  ("📉", "VOLUME FADING"),
