@@ -56,6 +56,10 @@ class ChainRun:
     def reject(self, reason: str):
         self.rejects[reason] = self.rejects.get(reason, 0) + 1
 
+    def reject_bulk(self, reason: str, n: int):
+        if n > 0:
+            self.rejects[reason] = self.rejects.get(reason, 0) + n
+
     def gate_fail(self, tier_failures: dict):
         """
         Tally which specific threshold blocked each token.
@@ -285,23 +289,46 @@ def scan_chain(chain: str, social_counts: dict[str, int],
     run.discovered = len(candidates)
     log.info("[%s] %d candidates", chain, run.discovered)
 
-    for ca in candidates[:limit]:
-        if ca in already:
-            run.reject("cooldown")
-            continue
+    # Fetch every candidate's market data in one pass rather than walking the
+    # list until a limit runs out. Discovery returns newest-first, and on a
+    # chain launching hundreds of tokens an hour the newest forty are all
+    # under ten minutes old — so the age gate rejected every one of them
+    # while genuinely mature tokens further down the list were never seen.
+    fresh = [c for c in candidates if c not in already]
+    markets = chain_base.dexscreener_markets(
+        fresh, chain, config.CHAINS[chain]["dexscreener_id"])
+    run.reject_bulk("cooldown", len(candidates) - len(fresh))
 
-        try:
-            market = adapter.market(ca)
-            if not market.ok:
-                run.reject(f"market:{market.error}")
+    scored: list[tuple[float, str, object]] = []
+    for ca in fresh:
+        m = markets.get(ca)
+        if not m or not m.ok:
+            # Not indexed yet — GeckoTerminal may still have it.
+            alt = chain_base.geckoterminal_market(
+                ca, chain, config.CHAINS[chain].get("geckoterminal_id"))
+            if alt.ok and alt.liquidity_usd > 0:
+                m = alt
+            else:
+                run.reject(f"market:{(m.error if m else 'missing')}")
                 continue
+        # Old enough to judge goes first; the rest are parking candidates.
+        min_age = config.thresholds_for(chain, "first_moon")["min_age_hours"]
+        mature = (not m.age_known) or m.age_hours >= min_age
+        scored.append((0 if mature else 1, ca, m))
 
-            # Cheap structural gate before spending a safety request.
+    # Mature tokens first, then youngest of the rest so parking sees the
+    # freshest launches rather than whatever happened to be listed first.
+    scored.sort(key=lambda x: (x[0], x[2].age_hours if x[2].age_known else 999))
+
+    evaluated = 0
+    for _, ca, market in scored:
+        if evaluated >= limit:
+            break
+        try:
             pre = scoring.classify_tier(market, chain)
             if not pre.matched:
                 run.reject("tier")
                 run.gate_fail(pre.failures)
-                # Too young is a "not yet", not a "no". Park it.
                 if (run.parked < min(MAX_PARK_PER_SCAN, park_budget)
                         and _worth_parking(pre, market)):
                     if store.watch_later(ca, chain, market.age_hours,
@@ -309,6 +336,7 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                         run.parked += 1
                 continue
 
+            evaluated += 1
             safety = adapter.safety(ca, market.pair_address)
             ev = scoring.evaluate(
                 market, safety, chain,
@@ -326,9 +354,6 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                      chain, market.name, market.symbol,
                      ev.tier.tier, ev.conviction.score, ev.conviction.explain())
 
-            # Record in both modes. A dry run that keeps no history teaches
-            # nothing; the only difference should be whether a message is
-            # sent, not whether the observation is remembered.
             sent_ok = False
             if dry_run:
                 run.alerted += 1

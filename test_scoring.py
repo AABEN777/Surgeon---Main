@@ -524,6 +524,42 @@ def test_watcher():
                                           mkt(1.05, dex="uniswap", fdv=70000)))
 
 
+def test_candidate_ordering():
+    """
+    Discovery returns newest-first. On a chain launching hundreds of tokens
+    an hour, the newest forty are all under ten minutes old — so a scan that
+    walks the list until its limit runs out evaluates nothing but tokens too
+    young to qualify, while mature ones further down are never seen at all.
+
+    Solana produced zero signals for days because of this.
+    """
+    print("\ncandidate ordering")
+
+    def tok(age, name):
+        return TokenMarket(ca=name, chain="solana", name=name, symbol=name,
+                           liquidity_usd=30000, fdv=60000, volume_24h=40000,
+                           volume_1h=40000, change_1h=45, change_5m=8,
+                           buys_5m=30, sells_5m=10, age_hours=age,
+                           age_known=True, dex="raydium")
+
+    candidates = [tok(0.01 + i * 0.002, f"new{i}") for i in range(56)]
+    candidates += [tok(0.5 + i * 0.3, f"mature{i}") for i in range(50)]
+    limit = 40
+
+    def matched(slice_):
+        return sum(1 for m in slice_
+                   if scoring.classify_tier(m, "solana", session="NORMAL").matched)
+
+    check("discovery order finds nothing", matched(candidates[:limit]), 0)
+
+    min_age = config.thresholds_for("solana", "first_moon")["min_age_hours"]
+    ordered = sorted(candidates,
+                     key=lambda m: (0 if m.age_hours >= min_age else 1,
+                                    m.age_hours))
+    check_true("maturity order finds candidates", matched(ordered[:limit]) > 0)
+    check_true("mature tokens lead", ordered[0].age_hours >= min_age)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -597,6 +633,7 @@ def main():
     test_watchlist()
     test_context_inputs()
     test_watcher()
+    test_candidate_ordering()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
