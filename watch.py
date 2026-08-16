@@ -159,12 +159,17 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
                         f"bonding curve ~{bc_pct:.0f}% — approaching graduation"))
 
     # -- stops -----------------------------------------------------
-    if "TP2" in fired or any(e == "TP2" for e, _ in out):
-        drawdown = _pnl(peak_price, market.price_usd)
-        if drawdown <= W["trail_after_tp2_pct"]:
-            out.append(("TRAIL_STOP",
-                        f"{drawdown:.0f}% off the peak, closing at {pnl:+.0f}%"))
-    else:
+    took_tp2 = "TP2" in fired or any(e == "TP2" for e, _ in out)
+    armed = peak_pnl >= W["trail_arm_pct"]
+    ratio = W["give_back_after_tp2"] if took_tp2 else W["give_back_ratio"]
+    floor = peak_pnl * (1 - ratio)
+
+    if armed and pnl <= floor:
+        given = 100 * (peak_pnl - pnl) / peak_pnl if peak_pnl else 0
+        out.append(("TRAIL_STOP",
+                    f"gave back {given:.0f}% of a {peak_pnl:+.0f}% peak, "
+                    f"now {pnl:+.0f}%"))
+    elif not armed:
         held_minutes = held_hours * 60
         if pnl <= W["stop_warn_pct"] and "STOP_WARN" not in fired:
             out.append(("STOP_WARN",

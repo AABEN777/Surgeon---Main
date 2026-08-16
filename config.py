@@ -313,7 +313,15 @@ WATCH = {
     "stop_loss_pct":      -35,   # grade it, stop watching
     "stop_grace_minutes":  20,   # no grading inside this window, warning only
 
-    "trail_after_tp2_pct": -20,
+    # Trailing arms on any meaningful gain, not just after TP2. wDELLx ran
+    # +45%, never reached TP1 at +50%, and gave back everything with nothing
+    # firing on the way down.
+    # Measured as the fraction of the gain surrendered, not drawdown from
+    # peak price. 40% off a +45% peak is break-even; 40% off a +500% peak is
+    # still a large win. The same number cannot mean both.
+    "trail_arm_pct":         25,   # peak gain needed to arm
+    "give_back_ratio":      0.65,  # surrender this much of the gain -> exit
+    "give_back_after_tp2":  0.35,  # tighter once TP2 is banked
     "time_stop_hours":      2,   # exit alert if still negative
     "time_exit_hours":      4,   # exit alert if still flat
     "max_hold_hours":       8,

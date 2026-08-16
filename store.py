@@ -432,8 +432,11 @@ class Store:
         })
 
     def stats(self) -> dict:
+        # Backlog rows were signalled hours before anything watched them, so
+        # they measure a gap in tracking rather than the quality of a call.
+        excluded = {"DATA_ERROR", "BACKLOG_UNTRACKED"}
         closed = [t for t in self.closed_trades()
-                  if str(t.get("outcome", "")).upper() != "DATA_ERROR"]
+                  if str(t.get("outcome", "")).upper() not in excluded]
         if not closed:
             return {"trades": 0, "wins": 0, "win_rate": 0.0}
         wins = [t for t in closed

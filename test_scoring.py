@@ -480,8 +480,23 @@ def test_watcher():
                                    "peak_price": 1e-12,
                                    "alerted_at": now - 600},
                                   mkt(0.02), None, set(), None), [])
-    check_true("trailing stop after TP2",
-               "TRAIL_STOP" in events(row(peak=3.0), mkt(2.2), {"TP1", "TP2"}))
+    # wDELLx peaked +45%, never reached TP1 at +50%, and gave back everything
+    # with nothing firing. Trailing now arms on any real gain, and is
+    # measured as the fraction of the gain surrendered — 40% off a +45% peak
+    # is break-even, 40% off a +500% peak is still a large win, so drawdown
+    # from peak price cannot mean the same thing at both scales.
+    check_true("holds while the gain holds",
+               "TRAIL_STOP" not in events(row(peak=1.45), mkt(1.30)))
+    check_true("fires once most of the gain is surrendered",
+               "TRAIL_STOP" in events(row(peak=1.45), mkt(1.15)))
+    check_true("noise on a small gain does not arm",
+               "TRAIL_STOP" not in events(row(peak=1.12), mkt(1.02)))
+    check_true("big winner keeps room to run",
+               "TRAIL_STOP" not in events(row(peak=5.0), mkt(4.0),
+                                          {"TP1", "TP2", "TP3"}))
+    check_true("tighter once TP2 is banked",
+               "TRAIL_STOP" in events(row(peak=5.0), mkt(2.6),
+                                      {"TP1", "TP2", "TP3"}))
     check_true("volume fade while in profit",
                "VOLUME_FADE" in events(row(), mkt(1.30, volume_5m=100)))
     check("healthy position fires nothing", events(row(), mkt(1.20)), [])
