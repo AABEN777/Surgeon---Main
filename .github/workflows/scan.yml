@@ -47,11 +47,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # Proves the bot token and chat id work before relying on them.
-      # Delete this step once a test message has landed.
-      - name: Prove Telegram delivery
-        run: python3 scan.py --test-alert
-
       - name: Scan
         run: |
           python3 scan.py --live \
