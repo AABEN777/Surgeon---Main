@@ -172,18 +172,37 @@ def _raw_get(url: str, retries: int = 1) -> str:
     return ""
 
 
-def scrape_all(channels=None, limit: Optional[int] = None) -> list[Mention]:
-    """Every monitored channel. Returns deduped mentions."""
+def scrape_all(channels=None, limit: Optional[int] = None,
+               workers: int = 6) -> list[Mention]:
+    """
+    Every monitored channel, fetched concurrently.
+
+    Sequentially this took twenty seconds a channel — eleven minutes for
+    thirty-three, which barely fits between fifteen-minute crons. The work is
+    almost entirely waiting on the network, so a small pool collapses it
+    without asking more of Telegram at any instant than a browser would.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     channels = channels or config.TELEGRAM_CHANNELS
     if limit:
         channels = channels[:limit]
 
     all_mentions, seen = [], set()
     reached = 0
-    for entry in channels:
-        handle, label = entry[0], entry[1]
-        try:
-            found = scrape_channel(handle, label)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(scrape_channel, entry[0], entry[1]): entry[0]
+            for entry in channels
+        }
+        for fut in as_completed(futures):
+            handle = futures[fut]
+            try:
+                found = fut.result()
+            except Exception as e:
+                log.warning("channel @%s failed: %s", handle, e)
+                continue
             if found:
                 reached += 1
             for mn in found:
@@ -191,8 +210,6 @@ def scrape_all(channels=None, limit: Optional[int] = None) -> list[Mention]:
                 if key not in seen:
                     seen.add(key)
                     all_mentions.append(mn)
-        except Exception as e:
-            log.warning("channel @%s failed: %s", handle, e)
 
     log.info("scraped %d/%d channels successfully, %d mentions",
              reached, len(channels), len(all_mentions))
