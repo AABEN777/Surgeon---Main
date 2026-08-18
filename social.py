@@ -219,16 +219,21 @@ def scrape_all(channels=None, limit: Optional[int] = None,
     return all_mentions
 
 
-def resolve_chains(mentions: list[Mention], max_lookups: int = 25) -> list[Mention]:
+def resolve_chains(mentions: list[Mention],
+                   max_lookups: int = 12) -> list[Mention]:
     """
     Attach a chain to each mention.
 
-    Solana addresses are unambiguous. EVM addresses could be any of four
-    chains, so those are resolved by asking which chain actually has a pool —
-    capped, because it costs a request each.
+    Solana addresses are unambiguous and free. An EVM address could belong to
+    any of four chains, and resolving it means asking each in turn which holds
+    liquidity — four network calls per token. Capped hard, because knowing the
+    chain is a convenience here: the scanner resolves it again anyway when it
+    evaluates the token.
     """
     lookups = 0
+    skipped = 0
     cache: dict[str, Optional[str]] = {}
+
     for mn in mentions:
         if mn.ca in cache:
             mn.chain = cache[mn.ca]
@@ -240,7 +245,13 @@ def resolve_chains(mentions: list[Mention], max_lookups: int = 25) -> list[Menti
             lookups += 1
             key, _ = chains.resolve_chain(mn.ca)
             mn.chain = key
+        elif candidates:
+            skipped += 1          # left unresolved rather than paying for it
         cache[mn.ca] = mn.chain
+
+    if skipped:
+        log.info("chain resolution: %d looked up, %d left for the scanner",
+                 lookups, skipped)
     return mentions
 
 

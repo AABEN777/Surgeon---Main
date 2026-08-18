@@ -355,18 +355,35 @@ def load_social_counts() -> dict[str, int]:
 
 def refresh_social() -> dict[str, int]:
     """Scrape channels, persist mentions, return {ca: unique channel count}."""
+    # Timed by phase. Parallelising the fetch did not move the total, which
+    # means the cost is elsewhere — and guessing at it twice was enough.
+    phases = {}
+    t0 = time.time()
     log.info("scraping %d channels", len(config.TELEGRAM_CHANNELS))
     mentions = social.scrape_all()
-    log.info("found %d mentions", len(mentions))
+    phases["scrape"] = time.time() - t0
+    log.info("found %d mentions in %.0fs", len(mentions), phases["scrape"])
+
     if mentions:
+        t1 = time.time()
         social.resolve_chains(mentions)
+        phases["resolve_chains"] = time.time() - t1
+
+        t2 = time.time()
         store.record_mentions([
             {"ca": m.ca, "chain": m.chain, "channel": m.channel,
              "seen_at": m.seen_at}
             for m in mentions
         ])
+        phases["store"] = time.time() - t2
 
-    return load_social_counts()
+    t3 = time.time()
+    counts = load_social_counts()
+    phases["load_counts"] = time.time() - t3
+
+    log.info("social timing — %s",
+             "  ".join(f"{k} {v:.0f}s" for k, v in phases.items()))
+    return counts
 
 
 def scan_chain(chain: str, social_counts: dict[str, float],
