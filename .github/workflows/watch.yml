@@ -1,10 +1,18 @@
 name: Watch
 
+# Every five minutes. Trailing stops were closing at -21% against a +95%
+# average peak because a fifteen-minute poll only saw the drawdown once the
+# move was already over.
 on:
   schedule:
-        - cron: "*/5 * * * *"
-
+    - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Evaluate only, send no alerts"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: surgeon-watch
@@ -14,17 +22,27 @@ jobs:
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     env:
+      SURGEON_LIVE:       "true"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
       SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
       HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
       PYTHONUNBUFFERED:   "1"
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python3 watch.py
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Watch positions
+        run: |
+          python3 watch.py --live \
+            ${{ inputs.dry_run && '--dry-run' || '' }}

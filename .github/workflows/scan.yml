@@ -1,5 +1,7 @@
 name: Scan
 
+# Offset from :00 deliberately — GitHub's scheduler is busiest on the hour
+# and delays schedule events under load.
 on:
   schedule:
     - cron: "7,22,37,52 * * * *"
@@ -23,7 +25,10 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+
     env:
+      # Sending needs this AND --live on the command. Either alone stays dry,
+      # so a mistyped flag results in silence rather than surprise.
       SURGEON_LIVE:       "true"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -31,16 +36,45 @@ jobs:
       SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
       HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
       PYTHONUNBUFFERED:   "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Proves the bot token and chat id work before relying on them.
+      # Delete this step once a test message has landed.
+      - name: Prove Telegram delivery
+        run: python3 scan.py --test-alert
+
+      - name: Scan
+        run: |
+          python3 scan.py --live \
+            ${{ inputs.chain && format('--chain {0}', inputs.chain) || '' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+  # Social scraping is slower and less time-critical than price discovery,
+  # so it runs on its own cadence rather than blocking every scan.
+  social:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'schedule'
+
+    env:
+      SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:     ${{ secrets.SUPABASE_KEY }}
+      PYTHONUNBUFFERED: "1"
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - name: Prove Telegram delivery
-        run: python3 scan.py --test-alert
-      - name: Scan
-        run: |
-          python3 scan.py --live \
-            ${{ inputs.chain && format('--chain {0}', inputs.chain) || '' }} \
-            ${{ inputs.dry_run && '--dry-run' || '' }}
+      - name: Refresh social mentions
+        run: python3 scan.py --social --dry-run --limit 0
