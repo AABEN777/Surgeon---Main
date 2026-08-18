@@ -117,30 +117,59 @@ def extract_addresses(text: str) -> list[str]:
 
 
 def scrape_channel(channel: str, label: str = "") -> list[Mention]:
-    page = http_get(TG_PREVIEW.format(channel=channel), timeout=15)
-    if page is None:
-        # http_get returns parsed JSON; Telegram serves HTML, so fetch raw.
-        page = _raw_get(TG_PREVIEW.format(channel=channel))
+    """
+    Read one channel's public preview.
+
+    Telegram serves HTML. An earlier version routed this through the JSON
+    fetcher, so every channel raised a decode error, burned its retries and
+    silently returned nothing — the mentions table sat empty for days while
+    the scraper appeared to run.
+    """
+    page = _raw_get(TG_PREVIEW.format(channel=channel))
     if not page:
-        log.warning("no response from @%s", channel)
+        log.warning("@%s — no page returned", channel)
+        return []
+
+    texts = _message_texts(page)
+    if not texts:
+        # A page that loads but yields no messages means the markup changed
+        # or Telegram is serving something else to this address.
+        marker = "tgme_widget_message" in page
+        log.warning("@%s — %d bytes, no messages parsed (widget markup %s)",
+                    channel, len(page),
+                    "present" if marker else "ABSENT — page may be a block")
         return []
 
     mentions, now = [], time.time()
-    for text in _message_texts(page):
+    for text in texts:
         for ca in extract_addresses(text):
             mentions.append(Mention(ca=ca, channel=label or channel, seen_at=now))
     return mentions
 
 
-def _raw_get(url: str) -> str:
+def _raw_get(url: str, retries: int = 1) -> str:
+    """Plain HTML fetch. Browser-ish headers: bare clients get thin pages."""
     import requests
-    try:
-        r = requests.get(url, timeout=15,
-                         headers={"User-Agent": config.USER_AGENT})
-        return r.text if r.status_code == 200 else ""
-    except Exception as e:
-        log.warning("fetch %s failed: %s", url, e)
-        return ""
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/120.0 Safari/537.36"),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(url, timeout=15, headers=headers)
+            if r.status_code == 200:
+                return r.text
+            log.warning("%s -> HTTP %s", url, r.status_code)
+            return ""
+        except Exception as e:
+            if attempt < retries:
+                time.sleep(2)
+                continue
+            log.warning("fetch %s failed: %s", url, e)
+    return ""
 
 
 def scrape_all(channels=None, limit: Optional[int] = None) -> list[Mention]:
@@ -150,16 +179,26 @@ def scrape_all(channels=None, limit: Optional[int] = None) -> list[Mention]:
         channels = channels[:limit]
 
     all_mentions, seen = [], set()
+    reached = 0
     for entry in channels:
         handle, label = entry[0], entry[1]
         try:
-            for mn in scrape_channel(handle, label):
+            found = scrape_channel(handle, label)
+            if found:
+                reached += 1
+            for mn in found:
                 key = (mn.ca, mn.channel)
                 if key not in seen:
                     seen.add(key)
                     all_mentions.append(mn)
         except Exception as e:
             log.warning("channel @%s failed: %s", handle, e)
+
+    log.info("scraped %d/%d channels successfully, %d mentions",
+             reached, len(channels), len(all_mentions))
+    if not reached and channels:
+        log.error("every channel returned nothing — Telegram is likely "
+                  "refusing this address range, not a parsing fault")
     return all_mentions
 
 

@@ -146,7 +146,14 @@ class SafetyReport:
         elif "lp_locked_pct" in self.unavailable:
             bits.append("LP n/a")
         if self.risk_raw is not None:
-            bits.append(f"Risk {self.risk_raw:g}")
+            # RugCheck's raw score runs low-is-safe, which "Risk 1" does not
+            # convey on its own — anything above 500 is rejected outright, so
+            # everything that reaches an alert sits in the lower band.
+            r = self.risk_raw
+            grade = ("clean" if r <= 50 else
+                     "minor" if r <= 200 else
+                     "elevated" if r <= 500 else "severe")
+            bits.append(f"Rug {r:g} ({grade})")
         if self.buy_tax_pct is not None or self.sell_tax_pct is not None:
             b = self.buy_tax_pct if self.buy_tax_pct is not None else 0
             s = self.sell_tax_pct if self.sell_tax_pct is not None else 0
