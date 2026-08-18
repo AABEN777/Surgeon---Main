@@ -196,8 +196,10 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                 if not dry_run:
                     res = alerts.send_signal(ev, adapter)
                     sent_ok = res.ok
-                    if res.ok:
-                        already[ca] = time.time()
+                # Mark it handled either way. Recording only on a successful
+                # send meant a dry run could revive a token and then signal
+                # the same token again minutes later in the same pass.
+                already[ca] = time.time()
                 store.record_signal(ev, adapter, sent_ok=sent_ok)
                 store.drop_from_watchlist(ca)
                 revived[chain] = revived.get(chain, 0) + 1
@@ -385,10 +387,10 @@ def scan_chain(chain: str, social_counts: dict[str, float],
                 sent_ok = res.ok
                 if res.ok:
                     run.alerted += 1
-                    already[ca] = time.time()
                 else:
                     log.warning("[%s] alert failed for %s: %s",
                                 chain, market.symbol, res.error)
+            already[ca] = time.time()
             store.record_signal(ev, adapter, sent_ok=sent_ok)
 
         except Exception as e:
