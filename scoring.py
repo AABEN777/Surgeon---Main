@@ -217,7 +217,13 @@ class Conviction:
         return " ".join(f"{l}{p:+d}" for l, p in parts)
 
     @property
+    def trackable(self) -> bool:
+        """Worth recording and watching, even if it never reaches Telegram."""
+        return self.score >= config.CONVICTION["min_to_track"]
+
+    @property
     def alertable(self) -> bool:
+        """Worth interrupting for."""
         return self.score >= config.CONVICTION["min_to_alert"]
 
 
@@ -340,8 +346,14 @@ class Evaluation:
     from_watchlist: bool = False
 
     @property
-    def should_alert(self) -> bool:
+    def should_track(self) -> bool:
+        """Passed every gate — record it and watch how it turns out."""
         return self.rejected_by is None
+
+    @property
+    def should_alert(self) -> bool:
+        """Passed every gate and cleared the higher bar for interrupting."""
+        return self.rejected_by is None and self.conviction.alertable
 
     def summary(self) -> str:
         if self.rejected_by:
@@ -396,9 +408,9 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
             [f for f in conv.risk_flags if f.severity == "danger"])
         return ev
 
-    if not conv.alertable:
+    if not conv.trackable:
         ev.rejected_by = "conviction"
-        ev.reject_detail = f"{conv.score}/100 < {config.CONVICTION['min_to_alert']}"
+        ev.reject_detail = f"{conv.score}/100 < {config.CONVICTION['min_to_track']}"
         return ev
 
     return ev

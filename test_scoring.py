@@ -407,8 +407,10 @@ def test_context_inputs():
                       unavailable=["top_holder_pct"])
     bull = scoring.conviction_score(mid, ms, 0, 0, "BULLISH", session="NORMAL")
     pause = scoring.conviction_score(mid, ms, 0, 0, "PAUSE", session="NORMAL")
-    check_true("bull tape alerts", bull.alertable)
-    check_true("bleeding tape skips the same setup", not pause.alertable)
+    # Tracking and alerting are separate floors: this compares the decision
+    # to consider the token at all, which is where macro should bite.
+    check_true("bull tape keeps the setup", bull.trackable)
+    check_true("bleeding tape drops the same setup", not pause.trackable)
     check_true("macro appears in the breakdown", "macro:PAUSE" in pause.explain())
 
 
@@ -733,6 +735,48 @@ def test_meta_detection():
     meta.reset_cache()
 
 
+def test_alert_threshold():
+    """
+    Tracking and alerting answer different questions. Eleven signals a scan
+    is several hundred a day — the channel gets muted by evening. Track
+    generously because the outcome data tunes every weight; interrupt rarely.
+    """
+    print("\ntracking vs alerting")
+    check_true("alert bar is higher than track bar",
+               config.CONVICTION["min_to_alert"] > config.CONVICTION["min_to_track"])
+
+    m = TokenMarket(ca="t", chain="solana", name="Mid", symbol="MID",
+                    liquidity_usd=22000, fdv=70000, market_cap=70000,
+                    volume_24h=90000, volume_1h=40000, volume_5m=4000,
+                    change_1h=40, change_5m=6, buys_5m=30, sells_5m=14,
+                    age_hours=0.9, age_known=True, dex="raydium")
+    s = SafetyReport(ca="t", chain="solana", sources=["rugcheck"],
+                     top_holder_pct=2.5, insider_pct=3.0, holder_count=500,
+                     lp_locked_pct=100.0, creator_holds_pct=0.1, risk_raw=1.0)
+
+    ev = scoring.evaluate(m, s, "solana")
+    score = ev.conviction.score
+    if score >= config.CONVICTION["min_to_alert"]:
+        check_true("high score both tracks and alerts",
+                   ev.should_track and ev.should_alert)
+    else:
+        check_true("middling score is tracked", ev.should_track)
+        check_true("middling score does not interrupt", not ev.should_alert)
+
+    # A token below the tracking floor is neither watched nor sent.
+    weak = scoring.evaluate(
+        TokenMarket(ca="w", chain="solana", name="Weak", symbol="WK",
+                    liquidity_usd=9000, fdv=30000, market_cap=30000,
+                    volume_24h=12000, volume_1h=6000, change_1h=26,
+                    change_5m=-2, buys_5m=6, sells_5m=5, age_hours=1.2,
+                    age_known=True, dex="raydium"),
+        SafetyReport(ca="w", chain="solana", sources=["rugcheck"],
+                     top_holder_pct=9.0, insider_pct=6.0, holder_count=70,
+                     lp_locked_pct=100.0, creator_holds_pct=0.2, risk_raw=1.0),
+        "solana")
+    check_true("weak signal never alerts", not weak.should_alert)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -810,6 +854,7 @@ def main():
     test_scam_flags()
     test_channel_weighting()
     test_meta_detection()
+    test_alert_threshold()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

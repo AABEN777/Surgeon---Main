@@ -52,6 +52,7 @@ class ChainRun:
     discovered: int = 0
     evaluated: int = 0
     alerted: int = 0
+    tracked_only: int = 0
     parked: int = 0
     revived: int = 0
     rejects: dict = field(default_factory=dict)
@@ -181,9 +182,15 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                     macro=macro,
                     hot_meta=meta_mod.hot_terms(store))
                 ev.from_watchlist = True
-                if not ev.should_alert:
+                if not ev.should_track:
                     store.bump_check(ca, int(row.get("checks") or 0))
                     outcomes["low_conviction"] += 1
+                    continue
+                if not ev.should_alert:
+                    already[ca] = time.time()
+                    store.record_signal(ev, adapter, sent_ok=False)
+                    store.drop_from_watchlist(ca)
+                    outcomes["tracked_only"] = outcomes.get("tracked_only", 0) + 1
                     continue
 
                 log.info("[%s] REVIVED %s (%s) %s %d/100 — parked at %.2fh, "
@@ -371,8 +378,19 @@ def scan_chain(chain: str, social_counts: dict[str, float],
             )
             run.evaluated += 1
 
-            if not ev.should_alert:
+            if not ev.should_track:
                 run.reject(ev.rejected_by or "unknown")
+                continue
+
+            # Everything above the tracking floor is recorded and watched;
+            # only the higher bar reaches Telegram.
+            if not ev.should_alert:
+                run.tracked_only += 1
+                log.info("[%s] track %s (%s) %s %d/100",
+                         chain, market.name, market.symbol,
+                         ev.tier.tier, ev.conviction.score)
+                already[ca] = time.time()
+                store.record_signal(ev, adapter, sent_ok=False)
                 continue
 
             log.info("[%s] SIGNAL %s (%s) %s %d/100 — %s",
@@ -480,7 +498,8 @@ def main() -> int:
         reasons = ", ".join(f"{k}×{v}" for k, v in top) or "-"
         print(f"  {config.CHAINS[r.chain]['display']:<18} "
               f"found {r.discovered:>3}  scored {r.evaluated:>3}  "
-              f"alerts {r.alerted + rev:>2}  parked {r.parked:>3}"
+              f"alerts {r.alerted + rev:>2}  tracked {r.tracked_only:>3}"
+              f"  parked {r.parked:>3}"
               + (f"  revived {rev}" if rev else "") + f"   {reasons}")
         if r.gate_fails:
             worst = sorted(r.gate_fails.items(), key=lambda x: -x[1])[:5]

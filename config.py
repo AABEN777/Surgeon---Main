@@ -258,7 +258,12 @@ CONVICTION = {
     # A bleeding tape is not a small deduction. The same setup that is worth
     # taking with SOL up 8% is usually worth skipping with SOL down 12%.
     "macro":      {"BULLISH": 6, "NEUTRAL": 0, "CAUTION": -12, "PAUSE": -25},
-    "min_to_alert": 30,
+    # Two different questions. Tracking is cheap and the data is how every
+    # weight gets tuned, so track generously. Interrupting is expensive —
+    # eleven signals a scan is several hundred a day and the channel gets
+    # muted by evening.
+    "min_to_track": 30,     # recorded, watched, feeds the outcome data
+    "min_to_alert": 60,     # actually reaches Telegram
     "bands": {"HIGH": 80, "GOOD": 60, "WATCH": 30},
 }
 
