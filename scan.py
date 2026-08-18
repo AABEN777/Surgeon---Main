@@ -384,7 +384,7 @@ def scan_chain(chain: str, social_counts: dict[str, float],
 
             # Everything above the tracking floor is recorded and watched;
             # only the higher bar reaches Telegram.
-            if not ev.should_alert:
+            if not ev.should_alert or blocked:
                 run.tracked_only += 1
                 log.info("[%s] track %s (%s) %s %d/100",
                          chain, market.name, market.symbol,
@@ -454,10 +454,12 @@ def main() -> int:
     if not store.live:
         log.warning("no database — dedupe and positions will not persist")
 
+    # A cooling-off period suppresses alerts, never discovery. Tracking and
+    # the watchlist keep running so the outcome data stays continuous and a
+    # runner during a bad stretch is still recorded.
     blocked, why = portfolio_blocked()
-    if blocked and not args.dry_run:
-        log.warning("scan skipped: %s", why)
-        return 0
+    if blocked:
+        log.warning("alerts muted: %s (still scanning and tracking)", why)
 
     macro = smartmoney.macro_regime()
     hot_meta = meta_mod.hot_terms(store)

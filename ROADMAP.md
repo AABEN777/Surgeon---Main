@@ -59,7 +59,20 @@ available.
 
 ---
 
-## 3. CA analyzer command
+## 3. CA analyzer — BUILT
+
+`analyze.py`. Paste an address, get exactly what Surgeon computes and which
+gate decides it. Chain detected from address format, then resolved by asking
+which chain actually holds liquidity.
+
+Three ways in: the command line, the Actions tab via workflow_dispatch, or by
+sending an address to the bot — the last polls every five minutes rather than
+listening, since scheduled jobs cannot hold a socket open.
+
+Built because "would Surgeon have caught this?" kept being answered by
+reasoning about thresholds instead of running them.
+
+## 3b. CA analyzer (original note)
 
 Paste a contract address to the bot, get the full readout: market, safety
 including top-holder percentage, conviction with breakdown, chain
@@ -85,6 +98,18 @@ mentions and trades. Needs a few hundred outcomes.
 
 ## 5. Narrative auto-retune
 
+Two layers now score narrative. `config.NARRATIVES` is a fixed list with
+weights carried from the old VPS history. `meta.py` learns the current meta
+from whatever is actually running — every scan already fetches a hundred
+tokens per chain with their 24h change, and the words shared by the ones
+performing are the meta.
+
+The fixed weights still need retuning against realised outcomes;
+`v_narrative_performance` computes them. The learned layer needs no retuning
+by design.
+
+## 5b. Narrative weight retune (original)
+
 `NARRATIVES` weights are fixed guesses carried over from v1's trade history
 (AI +8, ANIMAL +5, POLITICAL −15, ELON −8). `v_narrative_performance` already
 computes real win rates per narrative; feed those back so the weights follow
@@ -94,7 +119,29 @@ evidence rather than memory.
 
 ---
 
-## 6. EVM holder data gap
+## 6. Scam heuristics — remaining two
+
+Four of King's six tells are live in `risk.py`: top holder over 3.5%, volume
+under 80% of cap, bundled supply over 15%, plus deployer holdings and thin
+holder counts. Scored as warnings, with three severe flags blocking outright.
+
+Two are not built:
+
+**Fresh-wallet funding.** Trading terminals show this by checking when each
+top holder was funded and from where. Reproducible via Helius on Solana —
+walk the top holders, look at first funding transaction age and whether they
+share a funder. Costs a request per holder, so it needs to run only on
+tokens that already passed everything else. No equivalent on EVM.
+
+**Fees paid against volume.** Roughly 1% of genuine volume should appear as
+fees, and a painted chart shows volume without them. No free API exposes
+this — DexScreener and GeckoTerminal both omit it — so it means summing fee
+transfers per pool ourselves.
+
+**X account quality** is deferred rather than planned: it needs the Twitter
+API at $200/month plus account age and location analysis.
+
+## 7. EVM holder data gap
 
 On Base and BNB Chain, tokens under roughly fifteen minutes old have no
 holder distribution at all — GoPlus has not scanned them, Blockscout 404s.
@@ -109,7 +156,7 @@ directly from an RPC.
 
 ---
 
-## 7. Going live
+## 8. Going live
 
 Alerting is deliberately fail-closed. Sending requires **both** `--live` on
 the command and `SURGEON_LIVE=true` in the environment; either alone stays

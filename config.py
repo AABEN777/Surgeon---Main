@@ -416,8 +416,12 @@ WATCH = {
     "whale_top_holder_pct":  30,
     "graduation_bc_pct":     60,
     "max_open_positions":    25,  # tracking cap
-    "cooloff_losses":         2,
-    "cooloff_minutes":       60,
+    # Inherited from the autonomous version, where pausing after losses
+    # protected capital. Signal-only, it just goes quiet while King is the
+    # one deciding what to trade — and two losers at a ~20% win rate is an
+    # ordinary afternoon, not a reason to miss the next runner.
+    "cooloff_losses":         5,
+    "cooloff_minutes":       20,
     # A parked token that has failed the gates this many times is not going
     # to turn. Holding it costs a re-check slot a fresher token could use.
     "max_watchlist_checks":   12,
