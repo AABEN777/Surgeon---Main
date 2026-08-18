@@ -777,6 +777,44 @@ def test_alert_threshold():
     check_true("weak signal never alerts", not weak.should_alert)
 
 
+def test_entrypoints_resolve():
+    """
+    A name used in one function but defined in another is invisible until a
+    live token reaches that line. `blocked` was referenced inside scan_chain
+    and defined in main, so every candidate that got as far as the alert
+    decision crashed — nine scored on Solana and none alerted.
+    """
+    import ast, builtins, inspect
+    import scan, watch, analyze
+    print("\nentrypoint name resolution")
+
+    def undefined_names(fn):
+        src = inspect.getsource(fn)
+        tree = ast.parse(src).body[0]
+        names = {a.arg for a in tree.args.args}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                names.add(node.id)
+            elif isinstance(node, (ast.For, ast.comprehension)):
+                for n in ast.walk(node.target):
+                    if isinstance(n, ast.Name):
+                        names.add(n.id)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+            elif isinstance(node, (ast.Lambda,)):
+                names.update(a.arg for a in node.args.args)
+        module = inspect.getmodule(fn)
+        known = names | set(dir(module)) | set(dir(builtins))
+        used = {n.id for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        return sorted(used - known)
+
+    for fn in (scan.scan_chain, scan.revisit_watchlist, scan.main,
+               watch.watch_chain, watch.evaluate_position, watch.main,
+               analyze.analyze, analyze.render, analyze.render_telegram):
+        check(f"{fn.__module__}.{fn.__name__} resolves", undefined_names(fn), [])
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -855,6 +893,7 @@ def main():
     test_channel_weighting()
     test_meta_detection()
     test_alert_threshold()
+    test_entrypoints_resolve()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

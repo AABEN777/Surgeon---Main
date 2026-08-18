@@ -287,7 +287,8 @@ def scan_chain(chain: str, social_counts: dict[str, float],
                dry_run: bool = False, limit: int = 40,
                already: dict[str, float] | None = None,
                macro: str = "NEUTRAL",
-               hot_meta: dict | None = None) -> ChainRun:
+               hot_meta: dict | None = None,
+               alerts_muted: bool = False) -> ChainRun:
     run = ChainRun(chain=chain)
     adapter = chains.get_adapter(chain)
     already = already if already is not None else {}
@@ -384,7 +385,7 @@ def scan_chain(chain: str, social_counts: dict[str, float],
 
             # Everything above the tracking floor is recorded and watched;
             # only the higher bar reaches Telegram.
-            if not ev.should_alert or blocked:
+            if not ev.should_alert or alerts_muted:
                 run.tracked_only += 1
                 log.info("[%s] track %s (%s) %s %d/100",
                          chain, market.name, market.symbol,
@@ -479,7 +480,8 @@ def main() -> int:
     for chain in targets:
         try:
             runs.append(scan_chain(chain, social_counts, args.dry_run,
-                                   args.limit, already, macro, hot_meta))
+                                   args.limit, already, macro, hot_meta,
+                                   alerts_muted=blocked))
         except Exception as e:
             log.error("[%s] scan crashed: %s", chain, e)
 
