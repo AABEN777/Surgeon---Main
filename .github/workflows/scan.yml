@@ -57,7 +57,7 @@ jobs:
   # so it runs on its own cadence rather than blocking every scan.
   social:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     if: github.event_name == 'schedule'
 
     env:
