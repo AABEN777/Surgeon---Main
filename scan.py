@@ -428,6 +428,8 @@ def main() -> int:
                     help="actually send alerts; also needs SURGEON_LIVE=true")
     ap.add_argument("--social", action="store_true",
                     help="refresh Telegram mentions before scanning")
+    ap.add_argument("--social-only", action="store_true",
+                    help="scrape channels and exit — no discovery, no scanning")
     ap.add_argument("--test-alert", action="store_true",
                     help="send one test message to Telegram and exit")
     ap.add_argument("--limit", type=int, default=40,
@@ -441,6 +443,22 @@ def main() -> int:
             "<code>test-ca-copy-me</code>")
         print("sent" if res.ok else f"FAILED: {res.error}")
         return 0 if res.ok else 1
+
+    # Scraping on its own. --limit 0 was not enough: it skipped evaluation
+    # but still ran discovery, bulk market fetches and watchlist re-checks
+    # across five chains, so the job blew its timeout before reporting.
+    if args.social_only:
+        started = time.time()
+        counts = refresh_social()
+        hot = sum(1 for n in counts.values()
+                  if n >= config.VELOCITY_MIN_CHANNELS)
+        print("\n" + "=" * 62)
+        print("SOCIAL SUMMARY")
+        print("=" * 62)
+        print(f"  {len(counts)} tokens mentioned, {hot} reaching consensus")
+        print(f"  completed in {time.time() - started:.0f}s")
+        print("=" * 62)
+        return 0
 
     started = time.time()
 
