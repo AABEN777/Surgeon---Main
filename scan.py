@@ -25,6 +25,7 @@ import scoring
 import alerts
 import social
 import smartmoney
+import meta as meta_mod
 from store import store
 
 logging.basicConfig(
@@ -177,7 +178,8 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                     market, safety, chain,
                     social_channels=social_counts.get(ca, 0),
                     smart_wallets=smartmoney.recent_buys(chain, store).get(ca, 0),
-                    macro=macro)
+                    macro=macro,
+                    hot_meta=meta_mod.hot_terms(store))
                 ev.from_watchlist = True
                 if not ev.should_alert:
                     store.bump_check(ca, int(row.get("checks") or 0))
@@ -247,11 +249,12 @@ def load_social_counts() -> dict[str, int]:
         ca, ch = row.get("ca"), row.get("channel")
         if ca and ch:
             by_ca.setdefault(ca, set()).add(ch)
-    counts = {ca: len(chs) for ca, chs in by_ca.items()}
+    counts = {ca: social.weighted_count(chs) for ca, chs in by_ca.items()}
     hot = sum(1 for n in counts.values() if n >= config.VELOCITY_MIN_CHANNELS)
     if counts:
-        log.info("social: %d tokens mentioned, %d with cross-channel consensus",
-                 len(counts), hot)
+        log.info("social: %d tokens mentioned, %d reaching consensus "
+                 "(promo channels weighted at %.0f%%)",
+                 len(counts), hot, config.PROMO * 100)
     return counts
 
 
@@ -271,10 +274,11 @@ def refresh_social() -> dict[str, int]:
     return load_social_counts()
 
 
-def scan_chain(chain: str, social_counts: dict[str, int],
+def scan_chain(chain: str, social_counts: dict[str, float],
                dry_run: bool = False, limit: int = 40,
                already: dict[str, float] | None = None,
-               macro: str = "NEUTRAL") -> ChainRun:
+               macro: str = "NEUTRAL",
+               hot_meta: dict | None = None) -> ChainRun:
     run = ChainRun(chain=chain)
     adapter = chains.get_adapter(chain)
     already = already if already is not None else {}
@@ -302,6 +306,13 @@ def scan_chain(chain: str, social_counts: dict[str, int],
     markets = chain_base.dexscreener_markets(
         fresh, chain, config.CHAINS[chain]["dexscreener_id"])
     run.reject_bulk("cooldown", len(candidates) - len(fresh))
+
+    # Every scan already fetches these snapshots and throws them away. The
+    # ones that are running are a free census of what the market is buying.
+    harvested = meta_mod.harvest(
+        [m for m in markets.values() if getattr(m, "ok", False)], chain)
+    if harvested:
+        store.record_meta_terms(harvested)
 
     scored: list[tuple[float, str, object]] = []
     gt_used = 0
@@ -354,6 +365,7 @@ def scan_chain(chain: str, social_counts: dict[str, int],
                 social_channels=social_counts.get(ca, 0),
                 smart_wallets=smart.get(ca, 0),
                 macro=macro,
+                hot_meta=hot_meta,
             )
             run.evaluated += 1
 
@@ -428,6 +440,7 @@ def main() -> int:
         return 0
 
     macro = smartmoney.macro_regime()
+    hot_meta = meta_mod.hot_terms(store)
     social_counts = refresh_social() if args.social else load_social_counts()
     already = store.recently_alerted()
     if already:
@@ -444,7 +457,7 @@ def main() -> int:
     for chain in targets:
         try:
             runs.append(scan_chain(chain, social_counts, args.dry_run,
-                                   args.limit, already, macro))
+                                   args.limit, already, macro, hot_meta))
         except Exception as e:
             log.error("[%s] scan crashed: %s", chain, e)
 

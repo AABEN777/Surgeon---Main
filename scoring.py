@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import config
+import meta as meta_mod
+import risk
 from chain_base import TokenMarket, SafetyReport
 
 
@@ -198,9 +200,11 @@ class Conviction:
     momentum: str = "FAKE"
     launch: str = "UNKNOWN"
     narrative: str = "NONE"
+    meta_term: str = ""
     session: str = "NORMAL"
-    social_channels: int = 0
+    social_channels: float = 0.0
     smart_wallets: int = 0
+    risk_flags: list = field(default_factory=list)
 
     def add(self, label: str, points: int):
         if points:
@@ -227,10 +231,11 @@ def _tiered(value: float, table: list) -> int:
 
 def conviction_score(m: TokenMarket,
                      safety: SafetyReport,
-                     social_channels: int = 0,
+                     social_channels: float = 0.0,
                      smart_wallets: int = 0,
                      macro: str = "NEUTRAL",
-                     session: Optional[str] = None) -> Conviction:
+                     session: Optional[str] = None,
+                     hot_meta: Optional[dict] = None) -> Conviction:
     """
     0-100 with the arithmetic exposed.
 
@@ -267,7 +272,7 @@ def conviction_score(m: TokenMarket,
 
     for n, pts in sorted(C["social"].items(), reverse=True):
         if social_channels >= n:
-            c.add(f"social:{social_channels}ch", pts)
+            c.add(f"social:{social_channels:g}ch", pts)
             break
 
     for n, pts in sorted(C["smart_money"].items(), reverse=True):
@@ -278,6 +283,13 @@ def conviction_score(m: TokenMarket,
     narrative, npts = classify_narrative(m.name, m.symbol)
     c.narrative = narrative
     c.add(f"narrative:{narrative}", npts)
+
+    # Whatever is running today, learned rather than listed.
+    if hot_meta:
+        mpts, term = meta_mod.score(m.name, m.symbol, hot_meta)
+        if mpts:
+            c.meta_term = term
+            c.add(f"meta:{term}", mpts)
 
     c.add(f"session:{c.session}", config.MARKET_HOURS_ADJUST[c.session]["conviction"])
     c.add(f"macro:{macro}", C["macro"].get(macro, 0))
@@ -292,6 +304,13 @@ def conviction_score(m: TokenMarket,
     issues = m.sanity_issues
     if issues:
         c.add(f"suspect_data:{len(issues)}", -20)
+
+    # Scam heuristics. Deliberately scored rather than enforced: the
+    # thresholds are tighter than the entry gates, and a token collecting
+    # several of these drops below the alert floor on its own arithmetic.
+    c.risk_flags = risk.assess(m, safety)
+    for flag in c.risk_flags:
+        c.add(f"risk:{flag.code}", flag.penalty)
 
     c.score = max(0, min(100, c.score))
     b = C["bands"]
@@ -332,8 +351,9 @@ class Evaluation:
 
 
 def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
-             social_channels: int = 0, smart_wallets: int = 0,
-             macro: str = "NEUTRAL") -> Evaluation:
+             social_channels: float = 0.0, smart_wallets: int = 0,
+             macro: str = "NEUTRAL",
+             hot_meta: Optional[dict] = None) -> Evaluation:
     """
     Single decision point: alert or not, and why.
 
@@ -344,7 +364,7 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
     session = market_session()
     tier = classify_tier(m, chain, session)
     conv = conviction_score(m, safety, social_channels, smart_wallets,
-                            macro, session)
+                            macro, session, hot_meta)
     ev = Evaluation(ca=m.ca, chain=chain, market=m, safety=safety,
                     tier=tier, conviction=conv)
 
@@ -365,6 +385,15 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
         ev.rejected_by = "tier"
         first = tier.failures.get("first_moon", [])
         ev.reject_detail = "; ".join(first[:2]) if first else "no tier matched"
+        return ev
+
+    # Any single warning is survivable; several severe ones together is a
+    # pattern, and no amount of momentum should outvote it.
+    dangers = risk.danger_count(conv.risk_flags)
+    if dangers >= config.SCAM["max_danger_flags"]:
+        ev.rejected_by = "scam_pattern"
+        ev.reject_detail = risk.summarise(
+            [f for f in conv.risk_flags if f.severity == "danger"])
         return ev
 
     if not conv.alertable:

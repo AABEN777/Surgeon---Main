@@ -129,6 +129,9 @@ def format_signal(ev, adapter) -> str:
         + (f"   ·   {esc(m.launchpad)}" if m.launchpad else ""),
     ]
 
+    if c.meta_term:
+        lines.append(f"🔥 Riding the <b>{esc(c.meta_term)}</b> meta")
+
     if c.social_channels or c.smart_wallets:
         extra = []
         if c.social_channels:
@@ -148,6 +151,13 @@ def format_signal(ev, adapter) -> str:
     issues = m.sanity_issues
     if issues:
         lines.append(f"⚠️ Suspect data: {esc(', '.join(issues[:3]))}")
+
+    if c.risk_flags:
+        lines.append("")
+        lines.append("🚩 <b>Scam checks</b>")
+        for f in c.risk_flags[:5]:
+            mark = "🔴" if f.severity == "danger" else "🟡"
+            lines.append(f"{mark} {esc(f.code)} — {esc(f.detail)} ({f.penalty})")
 
     lines += [
         "",

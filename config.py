@@ -105,15 +105,19 @@ THRESHOLDS = {
     # Volume is gated on the last hour plus turnover, never on 24h totals.
     # For a token minutes old, "24h volume" is lifetime volume — a $50k floor
     # demanded $50k of trade in twelve minutes and rejected genuine runners.
+    # 184 first_moon trades won 17.9%; 28 boosted trades won 32.1%. The
+    # scanner was built around catching launches in their first minutes and
+    # the older cohort nearly doubled the win rate, so first_moon tightens
+    # and boosted opens up.
     "first_moon": {
-        "min_liquidity":   5_000,
+        "min_liquidity":   6_000,
         "min_fdv":         5_000,
         "max_fdv":       150_000,
         "min_age_hours":     0.17,   # 10min — past the instant-rug window
         "max_age_hours":     2.0,
-        "min_change_1h":    15.0,
-        "min_volume_1h":   3_000,
-        "min_turnover_1h":   0.15,   # hourly volume / liquidity
+        "min_change_1h":    25.0,
+        "min_volume_1h":   4_000,
+        "min_turnover_1h":   0.22,
         "min_change_5m":   -10.0,
     },
     "second_moon": {
@@ -131,14 +135,14 @@ THRESHOLDS = {
     # and second_moon needs $100k FDV, which left a 3h-old $60k token matching
     # nothing at all.
     "boosted": {
-        "min_liquidity":  10_000,
-        "min_fdv":        20_000,
+        "min_liquidity":   8_000,
+        "min_fdv":        15_000,
         "max_fdv":     5_000_000,
         "min_age_hours":     0.17,
-        "max_age_hours":    24.0,
+        "max_age_hours":    36.0,
         "min_change_1h":     0.0,
-        "min_volume_1h":   5_000,
-        "min_turnover_1h":   0.05,
+        "min_volume_1h":   3_500,
+        "min_turnover_1h":   0.04,
         "min_change_5m":   -15.0,
     },
 }
@@ -154,6 +158,15 @@ CHAIN_THRESHOLD_OVERRIDES = {
     "monad": {
         "first_moon": {"min_liquidity": 3_000, "min_volume_1h": 1_500},
         "boosted":    {"min_liquidity": 5_000, "min_volume_1h": 2_000},
+    },
+    # 46 trades, 13% win rate, average peak +4% — Base signals barely go
+    # green at all. Raised rather than disabled: the chain is not dead, our
+    # bar for it was too low.
+    "base": {
+        "first_moon": {"min_change_1h": 45.0, "min_volume_1h": 10_000,
+                       "min_turnover_1h": 0.35, "min_liquidity": 12_000},
+        "boosted":    {"min_change_1h": 15.0, "min_volume_1h": 8_000,
+                       "min_turnover_1h": 0.12},
     },
 }
 
@@ -187,6 +200,24 @@ SAFETY = {
     # "flag"  = still alert, label it loudly, heavy conviction penalty
     # "block" = never alert
     "unverified_policy":    "flag",
+}
+
+# ── SCAM HEURISTICS ───────────────────────────────────────────────
+# Trader-supplied tells, far tighter than the entry gates. Applied as
+# conviction penalties rather than rejects — as rejects they would silence
+# the scanner, and a token collecting several of them falls below the alert
+# floor on arithmetic anyway.
+SCAM = {
+    # Flip to False to score exactly as before these were added. Nothing
+    # else changes — the checks are additive, not a rewrite.
+    "enabled":            True,
+    "top_holder_pct":        3.5,   # single wallet above this is a warning
+    "min_volume_to_mcap":    0.80,  # 24h volume under this share of cap
+    "bundled_pct":          15.0,   # supply held by launch-bundled wallets
+    "min_holders":          50,
+    "creator_holds_pct":     2.0,
+    # One warning is survivable. Three severe ones together is a pattern.
+    "max_danger_flags":      3,
 }
 
 # ── MARKET DATA SANITY ────────────────────────────────────────────
@@ -236,12 +267,22 @@ CONVICTION = {
 NARRATIVES = {
     "AI":        {"points":  8, "patterns": ["ai", "gpt", "agent", "robot", "neural",
                                              "compute", "agi", "llm", "model"]},
-    "ANIMAL":    {"points":  5, "patterns": ["dog", "cat", "pepe", "frog", "bear",
-                                             "whale", "bird", "wolf", "ape", "bunny",
-                                             "hamster", "penguin", "hippo", "shiba",
-                                             "inu", "monkey", "goat", "duck", "fox",
-                                             "tiger", "lion", "panda", "sloth",
-                                             "otter", "crab", "snail", "moo", "cow"]},
+    "ANIMAL":    {"points":  5, "patterns": [
+        # Deliberately long. A dog meta runs as corgi, puppy and terrier, not
+        # as the word "dog" — a short list makes category metas invisible.
+        "dog", "doggo", "puppy", "pup", "shiba", "inu", "corgi", "husky",
+        "terrier", "retriever", "poodle", "pug", "beagle", "dachshund",
+        "labrador", "chihuahua", "mutt", "hound", "collie", "spaniel",
+        "cat", "kitty", "kitten", "meow", "feline", "tabby", "persian",
+        "lion", "tiger", "leopard", "cheetah", "panther", "lynx",
+        "pepe", "frog", "toad", "bear", "bull", "whale", "shark", "dolphin",
+        "bird", "duck", "goose", "owl", "eagle", "hawk", "penguin", "parrot",
+        "wolf", "fox", "ape", "monkey", "gorilla", "chimp", "orangutan",
+        "bunny", "rabbit", "hamster", "mouse", "rat", "squirrel", "otter",
+        "goat", "sheep", "cow", "pig", "hippo", "rhino", "panda", "sloth",
+        "koala", "camel", "llama", "alpaca", "crab", "snail", "turtle",
+        "snake", "lizard", "gecko", "axolotl", "capybara", "raccoon",
+    ]},
     "POLITICAL": {"points": -15, "patterns": ["trump", "maga", "biden", "political",
                                               "president", "congress", "democrat",
                                               "republican", "election"]},
@@ -252,6 +293,19 @@ NARRATIVES = {
 # Checked in this order — a token matching both ELON and ANIMAL ("Doge") is
 # an ELON play, and ELON's 25% historical win rate must win the tie.
 NARRATIVE_PRIORITY = ["POLITICAL", "ELON", "AI", "RWA", "ANIMAL"]
+
+# ── META DETECTION ────────────────────────────────────────────────
+# The narrative list above is fixed and cannot contain a meta that did not
+# exist yesterday. This learns one from whatever is actually performing.
+META = {
+    "min_change_24h":   80.0,    # a token must be running to vote
+    "min_liquidity":  8_000,     # a 900% move on $300 is not a meta
+    "window_hours":     24.0,
+    "min_tokens":         3,     # distinct tokens carrying a word
+    "min_tokens_category": 6,    # categories aggregate, so need more
+    "saturate_at":       8,      # strength 1.0 at this many
+    "max_points":        12,     # tops up a signal, never carries it
+}
 
 # ── SMART MONEY WALLETS ───────────────────────────────────────────
 # chain -> [{address, label}]
@@ -271,32 +325,54 @@ SMART_MONEY = {
 }
 
 # ── SOCIAL CHANNELS ───────────────────────────────────────────────
+# (handle, label, weight). Weight is how much a mention counts toward
+# consensus. Paid-promotion channels post what they are paid to post, so
+# three of them agreeing is one advertiser's budget, not three opinions.
+# This is a stopgap — roadmap item 4 replaces these guesses with each
+# channel's measured hit rate.
+ORGANIC, PROMO = 1.0, 0.35
+
 TELEGRAM_CHANNELS = [
-    ("Blessedmemecalls",       "Blessed"),
-    ("CatfishcallsbyPoe",      "Catfish by Poe"),
-    ("CryptoLord100xCalls",    "CryptoLord"),
-    ("BanksDegenPlays",        "Banks"),
-    ("ghostfacecallerchannel", "Poizer"),
-    ("spidersjournal",         "SpiderCrypto"),
-    ("hellokook",              "Kook"),
-    ("SHITTYCALLZBYPOE",       "Shitty Calls by Poe"),
-    ("Gems1000XXCalls",        "Royal Gems"),
-    ("moderncryptoanalyst",    "Modern"),
-    ("nft_brewery",            "Brewery"),
-    ("jsdao",                  "JSDAO"),
-    ("HubzCabal",              "HubzCabal"),
-    ("realsolanahome",         "Solana Home"),
-    ("SaintDovydegen",         "Saint Dovy"),
-    ("Alphadropcall",          "Alpha Drop"),
-    ("crypticsden22",          "Cryptics Den"),
-    ("shahlito",               "Shahlito"),
-    ("ferbsfriendz",           "Ferbs Friendz"),
-    ("solidtradesz",           "Solid Trades"),
-    ("solpumpforce67",         "Sol Pump Force"),
-    ("calledbymaxi",           "Called By Maxi"),
-    ("SonicsAlphacalls",       "Sonics Alpha"),
-    ("newsgraph",              "Newsgraph"),
+    ("Blessedmemecalls",       "Blessed",             ORGANIC),
+    ("CatfishcallsbyPoe",      "Catfish by Poe",      ORGANIC),
+    ("CryptoLord100xCalls",    "CryptoLord",          ORGANIC),
+    ("BanksDegenPlays",        "Banks",               ORGANIC),
+    ("ghostfacecallerchannel", "Poizer",              ORGANIC),
+    ("spidersjournal",         "SpiderCrypto",        ORGANIC),
+    ("hellokook",              "Kook",                ORGANIC),
+    ("SHITTYCALLZBYPOE",       "Shitty Calls by Poe", ORGANIC),
+    ("Gems1000XXCalls",        "Royal Gems",          ORGANIC),
+    ("moderncryptoanalyst",    "Modern",              ORGANIC),
+    ("nft_brewery",            "Brewery",             ORGANIC),
+    ("jsdao",                  "JSDAO",               ORGANIC),
+    ("HubzCabal",              "HubzCabal",           ORGANIC),
+    ("realsolanahome",         "Solana Home",         ORGANIC),
+    ("SaintDovydegen",         "Saint Dovy",          ORGANIC),
+    ("Alphadropcall",          "Alpha Drop",          ORGANIC),
+    ("crypticsden22",          "Cryptics Den",        ORGANIC),
+    ("shahlito",               "Shahlito",            ORGANIC),
+    ("ferbsfriendz",           "Ferbs Friendz",       ORGANIC),
+    ("solidtradesz",           "Solid Trades",        ORGANIC),
+    ("solpumpforce67",         "Sol Pump Force",      ORGANIC),
+    ("calledbymaxi",           "Called By Maxi",      ORGANIC),
+    ("SonicsAlphacalls",       "Sonics Alpha",        ORGANIC),
+    ("newsgraph",              "Newsgraph",           ORGANIC),
+
+    # Paid-promotion channels — counted, but discounted.
+    ("EthansCrypto",           "Ethans Crypto",       PROMO),
+    ("DegenPlayhouse",         "Degen Playhouse",     PROMO),
+    ("SlavicCalls",            "Slavic Calls",        PROMO),
+    ("houseofdegeneracy",      "House of Degeneracy", PROMO),
+    ("bullybattalion",         "Bully Battalion",     PROMO),
+    ("Diorscabal",             "Diors Cabal",         PROMO),
+    ("eezzyjournal",           "Eezzy Journal",       PROMO),
+    ("dogendojo",              "Dogen Dojo",          PROMO),
+    ("unipcsjournal",          "Unipcs Journal",      PROMO),
 ]
+
+CHANNEL_WEIGHTS = {label: weight for _, label, weight in TELEGRAM_CHANNELS}
+PROMO_CHANNELS = {label for _, label, w in TELEGRAM_CHANNELS if w < ORGANIC}
+
 SOCIAL_WINDOW_SECONDS   = 7200   # 2h velocity window
 VELOCITY_MIN_CHANNELS   = 2      # unique channels to fire a velocity alert
 
@@ -325,8 +401,11 @@ WATCH = {
     "time_stop_hours":      2,   # exit alert if still negative
     "time_exit_hours":      4,   # exit alert if still flat
     "max_hold_hours":       8,
-    "volume_fade_ratio":  0.30,  # 5m vol < 30% of hourly average
-    "volume_fade_min_pnl":  20,
+    # Volume fade closed at +78% against a +101% peak; trailing closed at
+    # -21% against a +95% peak, on the same average high. Momentum dies
+    # before price does, so lean on the leading indicator.
+    "volume_fade_ratio":  0.45,
+    "volume_fade_min_pnl":  10,
     "whale_recheck_hours":   2,
     "whale_recheck_min_pnl": 30,
     "whale_top_holder_pct":  30,

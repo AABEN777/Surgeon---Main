@@ -90,6 +90,11 @@ class SolanaAdapter(ChainAdapter):
             rep.unavailable.extend(["top_holder_pct", "top10_pct"])
         else:
             outside = [h for h in holders if not h.get("insider")]
+            # Insider supply was filtered out of concentration and then
+            # discarded — it is the clearest bundling tell in the response.
+            insiders = [h for h in holders if h.get("insider")]
+            rep.insider_pct = round(
+                sum(safe_float(h.get("pct")) for h in insiders), 2)
             pcts = sorted((safe_float(h.get("pct")) for h in outside), reverse=True)
             if pcts:
                 rep.top_holder_pct = pcts[0]

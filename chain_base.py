@@ -93,6 +93,7 @@ class SafetyReport:
     sources: list[str] = field(default_factory=list)
     top_holder_pct: Optional[float] = None
     top10_pct: Optional[float] = None
+    insider_pct: Optional[float] = None      # supply bundled at launch
     holder_count: Optional[int] = None
     lp_locked_pct: Optional[float] = None
     has_graduated_pool: Optional[bool] = None

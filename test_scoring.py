@@ -560,6 +560,179 @@ def test_candidate_ordering():
     check_true("mature tokens lead", ordered[0].age_hours >= min_age)
 
 
+def test_scam_flags():
+    """
+    Trader-supplied scam tells. Thresholds are far tighter than the entry
+    gates — top holder at 3.5% against a 20% reject — so they are scored
+    rather than enforced. A token collecting several falls below the alert
+    floor on arithmetic; a token collecting several *severe* ones is a
+    pattern and gets blocked outright.
+    """
+    import risk
+    print("\nscam heuristics")
+
+    clean_m = TokenMarket(ca="a", chain="solana", name="Clean", symbol="CLN",
+                          liquidity_usd=45000, fdv=180000, market_cap=180000,
+                          volume_24h=220000, volume_1h=60000)
+    clean_s = SafetyReport(ca="a", chain="solana", sources=["rugcheck"],
+                           top_holder_pct=2.8, insider_pct=4.0,
+                           holder_count=640, creator_holds_pct=0.4)
+    check("clean token flags nothing", risk.assess(clean_m, clean_s), [])
+
+    painted = TokenMarket(ca="b", chain="solana", name="Painted", symbol="PNT",
+                          liquidity_usd=20000, fdv=900000, market_cap=900000,
+                          volume_24h=45000, volume_1h=6000)
+    painted_s = SafetyReport(ca="b", chain="solana", sources=["rugcheck"],
+                             top_holder_pct=12.5, insider_pct=24.0,
+                             holder_count=38, creator_holds_pct=5.5)
+    flags = risk.assess(painted, painted_s)
+    codes = {f.code for f in flags}
+    check_true("bundled supply caught", "BUNDLED" in codes)
+    check_true("thin volume against cap caught", "THIN_VOLUME" in codes)
+    check_true("heavy top holder caught", "TOP_HOLDER" in codes)
+    check_true("deployer holding caught", "CREATOR_HOLDS" in codes)
+    check_true("penalty is substantial", risk.total_penalty(flags) <= -60)
+
+    # Being unable to check is a risk in itself, not a neutral outcome.
+    check_true("unverified safety flagged",
+               "UNCHECKED" in {f.code for f in
+                               risk.assess(clean_m,
+                                           SafetyReport(ca="c", chain="base"))})
+
+    # Several severe flags together should not be outvoted by momentum.
+    hot = TokenMarket(ca="d", chain="solana", name="Hot", symbol="HOT",
+                      liquidity_usd=40000, fdv=900000, market_cap=900000,
+                      volume_24h=45000, volume_1h=40000, volume_5m=9000,
+                      change_1h=260, change_5m=40, buys_5m=300, sells_5m=40,
+                      age_hours=0.8, age_known=True, dex="raydium")
+    ev = scoring.evaluate(hot, painted_s, "solana", social_channels=3,
+                          smart_wallets=2)
+    check("stacked danger flags block the signal", ev.rejected_by, "scam_pattern")
+
+    # One warning must not silence an otherwise good signal.
+    mild = SafetyReport(ca="e", chain="solana", sources=["rugcheck"],
+                        top_holder_pct=5.0, insider_pct=3.0, holder_count=400,
+                        lp_locked_pct=100.0, creator_holds_pct=0.1)
+    ev2 = scoring.evaluate(hot, mild, "solana", social_channels=3)
+    check_true("single warning still alerts", ev2.should_alert)
+    check_true("but it is recorded",
+               any(f.code == "TOP_HOLDER" for f in ev2.conviction.risk_flags))
+
+
+def test_channel_weighting():
+    """
+    Paid-promotion channels post what they are paid to post. Three of them
+    agreeing is one advertiser's budget, not three opinions — counted equally
+    they would manufacture the same +20 consensus bonus as genuine overlap.
+    """
+    import social
+    print("\nchannel weighting")
+
+    def bonus(weighted):
+        for n, pts in sorted(config.CONVICTION["social"].items(), reverse=True):
+            if weighted >= n:
+                return pts
+        return 0
+
+    organic = social.weighted_count(["Blessed", "Catfish by Poe", "Kook"])
+    paid = social.weighted_count(["Ethans Crypto", "Slavic Calls", "Dogen Dojo"])
+    check("three organic channels", organic, 3.0)
+    check_true("three paid channels count for far less", paid < 1.5)
+    check("organic consensus earns full bonus", bonus(organic), 20)
+    check_true("paid-only consensus does not", bonus(paid) < 20)
+
+    # Genuine overlap should still be rewarded when promo channels join in.
+    mixed = social.weighted_count(["Blessed", "Catfish by Poe", "Ethans Crypto"])
+    check_true("real overlap still scores", bonus(mixed) >= 12)
+
+    # An unknown channel is treated as organic rather than silently ignored.
+    check("unknown channel counts as organic",
+          social.weighted_count(["Some New Channel"]), 1.0)
+
+    check("all channels registered", len(config.TELEGRAM_CHANNELS), 33)
+    check("promo set matches", len(config.PROMO_CHANNELS), 9)
+
+
+def test_meta_detection():
+    """
+    The narrative list is fixed and cannot contain a meta that did not exist
+    yesterday — when alien-file coins ran, no keyword table knew what an
+    alien file was. This learns the meta from whatever is performing.
+    """
+    import meta, store as store_mod
+    print("\nmeta detection")
+
+    check("stopwords stripped", meta.terms("The Official Meme Coin", "MEME"), set())
+    check_true("narrative words kept",
+               {"alien", "files"} <= meta.terms("Alien Files Disclosure", "ALIEN"))
+    # "inu", "dog" and "cat" stay in — when that meta runs they are the signal.
+    check_true("animal words are not stopwords",
+               "inu" in meta.terms("Doge Killer Inu", "DOGEK"))
+
+    store_mod._mem["meta_terms"] = []
+    s = store_mod.Store(url="", key="")
+
+    def tok(name, chg, liq=20000):
+        return TokenMarket(ca=name, chain="solana", name=name, symbol=name[:4],
+                           liquidity_usd=liq, fdv=90000, change_24h=chg, ok=True)
+
+    batch = [tok("Alien Files", 320), tok("Alien Disclosure", 180),
+             tok("The Alien Tapes", 140), tok("Alien Grey", 95),
+             tok("Roswell Alien", 210),
+             tok("Random Dog", 90), tok("Flat Token", 5),
+             tok("Pump Scam", 900, liq=300)]
+    s.record_meta_terms(meta.harvest(batch, "solana"))
+
+    meta.reset_cache()
+    hot = meta.hot_terms(s)
+    check_true("running meta detected", "alien" in hot)
+    check_true("flat token contributes nothing", "flat" not in hot)
+    # A 900% move on $300 of liquidity is a print, not a meta.
+    check_true("illiquid pump excluded", "scam" not in hot)
+    # One token carrying a word is a lottery ticket, not a narrative.
+    check_true("single occurrence ignored", "roswell" not in hot)
+
+    pts, term = meta.score("Alien Baby", "", hot)
+    check_true("new token riding the meta scores", pts > 0)
+    check("matched term reported", term, "alien")
+    check("unrelated token scores nothing", meta.score("Dog With Hat", "", hot)[0], 0)
+    check_true("meta tops up rather than carries",
+               pts <= config.META["max_points"])
+
+    # A meta comes in two shapes. News-driven ones share a literal word;
+    # category ones do not — a dog meta runs as shiba, corgi and terrier,
+    # sharing a theme and no word at all. Word frequency finds the first and
+    # misses the second entirely.
+    store_mod._mem["meta_terms"] = []
+    meta.reset_cache()
+    s2 = store_mod.Store(url="", key="")
+
+    def dog(name, sym, chg):
+        return TokenMarket(ca=name, chain="solana", name=name, symbol=sym,
+                           liquidity_usd=20000, fdv=90000, change_24h=chg,
+                           ok=True)
+
+    s2.record_meta_terms(meta.harvest([
+        dog("Shiba Rocket", "SHIBR", 210), dog("Corgi King", "CORGI", 160),
+        dog("Puppy Punk", "PUPP", 190),    dog("Inu Master", "INUM", 140),
+        dog("Bull Terrier", "TERR", 95),   dog("Golden Retriever", "RETR", 130),
+        dog("Beagle Boy", "BEAG", 115),    dog("Quantum Ledger", "QL", 110),
+    ], "solana"))
+    meta.reset_cache()
+    hot2 = meta.hot_terms(s2)
+    check_true("themed run detected without a shared word", "#ANIMAL" in hot2)
+    pts2, term2 = meta.score("Dachshund Dan", "DACH", hot2)
+    check_true("a different breed still matches the theme", pts2 > 0)
+    check("unrelated token ignores the theme",
+          meta.score("Random Widget", "RW", hot2)[0], 0)
+
+    store_mod._mem["meta_terms"] = []
+    meta.reset_cache()
+
+    store_mod._mem["meta_terms"] = []
+    meta.reset_cache()
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -634,6 +807,9 @@ def main():
     test_context_inputs()
     test_watcher()
     test_candidate_ordering()
+    test_scam_flags()
+    test_channel_weighting()
+    test_meta_detection()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

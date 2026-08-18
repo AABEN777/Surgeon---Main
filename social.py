@@ -150,7 +150,8 @@ def scrape_all(channels=None, limit: Optional[int] = None) -> list[Mention]:
         channels = channels[:limit]
 
     all_mentions, seen = [], set()
-    for handle, label in channels:
+    for entry in channels:
+        handle, label = entry[0], entry[1]
         try:
             for mn in scrape_channel(handle, label):
                 key = (mn.ca, mn.channel)
@@ -187,6 +188,17 @@ def resolve_chains(mentions: list[Mention], max_lookups: int = 25) -> list[Menti
     return mentions
 
 
+def weighted_count(channels) -> float:
+    """
+    Consensus strength, not headcount.
+
+    Paid-promotion channels post what they are paid to post, so three of them
+    agreeing is one advertiser's budget rather than three opinions. Weights
+    live in config.CHANNEL_WEIGHTS; anything unknown counts as organic.
+    """
+    return round(sum(config.CHANNEL_WEIGHTS.get(c, 1.0) for c in channels), 2)
+
+
 def velocity(mentions: list[Mention],
              min_channels: Optional[int] = None) -> dict[str, list[str]]:
     """
@@ -200,12 +212,12 @@ def velocity(mentions: list[Mention],
     for mn in mentions:
         by_ca.setdefault(mn.ca, set()).add(mn.channel)
     return {ca: sorted(chs) for ca, chs in by_ca.items()
-            if len(chs) >= threshold}
+            if weighted_count(chs) >= threshold}
 
 
-def channel_counts(mentions: list[Mention]) -> dict[str, int]:
-    """{ca: unique channel count} — feeds the conviction score."""
+def channel_counts(mentions: list[Mention]) -> dict[str, float]:
+    """{ca: weighted consensus} — feeds the conviction score."""
     by_ca: dict[str, set[str]] = {}
     for mn in mentions:
         by_ca.setdefault(mn.ca, set()).add(mn.channel)
-    return {ca: len(chs) for ca, chs in by_ca.items()}
+    return {ca: weighted_count(chs) for ca, chs in by_ca.items()}

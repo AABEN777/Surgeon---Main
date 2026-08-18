@@ -28,7 +28,8 @@ _session.headers.update({"User-Agent": config.USER_AGENT})
 
 # in-memory fallback
 _mem: dict[str, list[dict]] = {"signals": [], "mentions": [],
-                               "positions": [], "watchlist": []}
+                               "positions": [], "watchlist": [],
+                               "meta_terms": []}
 
 
 class Store:
@@ -397,6 +398,10 @@ class Store:
     def bump_check(self, ca: str, checks: int):
         return self.update("watchlist", {"ca": ca},
                            {"checks": checks + 1, "last_checked": time.time()})
+
+    # ── meta terms ────────────────────────────────────────────────
+    def record_meta_terms(self, rows: list[dict]):
+        return self.insert("meta_terms", rows) if rows else []
 
     # ── social mentions ───────────────────────────────────────────
     def record_mentions(self, rows: list[dict]):
