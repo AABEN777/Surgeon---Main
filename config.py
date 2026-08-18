@@ -105,17 +105,22 @@ THRESHOLDS = {
     # Volume is gated on the last hour plus turnover, never on 24h totals.
     # For a token minutes old, "24h volume" is lifetime volume — a $50k floor
     # demanded $50k of trade in twelve minutes and rejected genuine runners.
-    # 184 first_moon trades won 17.9%; 28 boosted trades won 32.1%. The
-    # scanner was built around catching launches in their first minutes and
-    # the older cohort nearly doubled the win rate, so first_moon tightens
-    # and boosted opens up.
+    # 184 first_moon trades won 17.9%; 28 boosted trades won 32.1%. That is
+    # evidence older tokens outperform younger ones, which justifies widening
+    # boosted — it says nothing about how much momentum to demand from a young
+    # one, and raising this gate to 25% blocked 83 of 96 Solana candidates.
+    #
+    # It is also the wrong lever mechanically: for a twenty-minute-old token,
+    # "1h change" spans its whole life, so a high floor rejects anything that
+    # launched, dipped and is only now turning. Turnover stays raised, since
+    # it measures real activity rather than a price path.
     "first_moon": {
         "min_liquidity":   6_000,
         "min_fdv":         5_000,
         "max_fdv":       150_000,
         "min_age_hours":     0.17,   # 10min — past the instant-rug window
         "max_age_hours":     2.0,
-        "min_change_1h":    25.0,
+        "min_change_1h":    15.0,
         "min_volume_1h":   4_000,
         "min_turnover_1h":   0.22,
         "min_change_5m":   -10.0,
