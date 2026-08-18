@@ -58,7 +58,9 @@ jobs:
   social:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event_name == 'schedule'|| inputs.dry_run
+    # Runs on the cron, and on a manual run when dry_run is ticked —
+    # otherwise testing the scraper means waiting for the next quarter hour.
+    if: github.event_name == 'schedule' || inputs.dry_run
 
     env:
       SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
