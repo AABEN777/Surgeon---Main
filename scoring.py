@@ -143,7 +143,8 @@ class TierResult:
 
 
 def classify_tier(m: TokenMarket, chain: str,
-                  session: Optional[str] = None) -> TierResult:
+                  session: Optional[str] = None,
+                  tiers: Optional[tuple] = None) -> TierResult:
     """
     Which tier, if any, this token qualifies for. Returns the reasons each
     tier was missed so a near-miss is visible rather than silent.
@@ -152,7 +153,7 @@ def classify_tier(m: TokenMarket, chain: str,
     adj = config.MARKET_HOURS_ADJUST[session]
     res = TierResult()
 
-    for tier in ("first_moon", "second_moon", "boosted"):
+    for tier in (tiers or ("first_moon", "second_moon", "boosted")):
         t = config.thresholds_for(chain, tier)
         min_chg = t["min_change_1h"] * adj["min_change_1h_mult"]
         min_vol = t["min_volume_1h"] * adj["min_volume_mult"]
@@ -344,6 +345,7 @@ class Evaluation:
     rejected_by: Optional[str] = None
     reject_detail: str = ""
     from_watchlist: bool = False
+    called_by: list = field(default_factory=list)
 
     @property
     def should_track(self) -> bool:
@@ -352,8 +354,16 @@ class Evaluation:
 
     @property
     def should_alert(self) -> bool:
-        """Passed every gate and cleared the higher bar for interrupting."""
-        return self.rejected_by is None and self.conviction.alertable
+        """Passed every gate and cleared the bar for interrupting."""
+        if self.rejected_by is not None:
+            return False
+        if self.tier.tier == "social_call":
+            # Consensus is the signal, not the score. Safety, scam checks and
+            # the tier gate have already run — one channel posting into the
+            # void is all this needs to exclude.
+            return (self.conviction.social_channels
+                    >= config.VELOCITY_MIN_CHANNELS)
+        return self.conviction.alertable
 
     def summary(self) -> str:
         if self.rejected_by:
@@ -365,7 +375,8 @@ class Evaluation:
 def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
              social_channels: float = 0.0, smart_wallets: int = 0,
              macro: str = "NEUTRAL",
-             hot_meta: Optional[dict] = None) -> Evaluation:
+             hot_meta: Optional[dict] = None,
+             tiers: Optional[tuple] = None) -> Evaluation:
     """
     Single decision point: alert or not, and why.
 
@@ -374,7 +385,7 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
     symptom of it.
     """
     session = market_session()
-    tier = classify_tier(m, chain, session)
+    tier = classify_tier(m, chain, session, tiers)
     conv = conviction_score(m, safety, social_channels, smart_wallets,
                             macro, session, hot_meta)
     ev = Evaluation(ca=m.ca, chain=chain, market=m, safety=safety,
@@ -408,7 +419,10 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
             [f for f in conv.risk_flags if f.severity == "danger"])
         return ev
 
-    if not conv.trackable:
+    # The conviction floor filters noise out of discovery. A channel call has
+    # already been filtered by people watching full-time, so it is judged on
+    # consensus and safety rather than on resembling a fresh launch.
+    if tier.tier != "social_call" and not conv.trackable:
         ev.rejected_by = "conviction"
         ev.reject_detail = f"{conv.score}/100 < {config.CONVICTION['min_to_track']}"
         return ev

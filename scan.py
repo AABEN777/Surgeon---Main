@@ -219,6 +219,92 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
     return revived
 
 
+def scan_social_calls(dry_run: bool, already: dict[str, float],
+                      macro: str = "NEUTRAL",
+                      hot_meta: dict | None = None) -> dict:
+    """
+    Evaluate what the channels are calling.
+
+    Mentions were only ever used to top up the score of tokens Surgeon had
+    already discovered — so of 78 mentions, 76 were thrown away because our
+    own discovery had not surfaced them. That is backwards. A channel posting
+    a contract is a candidate in its own right, and the whole point of
+    watching these channels is the runner Surgeon's own scan would never see.
+
+    Every token still passes the same safety, scam and conviction gates. What
+    changes is that it gets looked at, and that the alert says who called it.
+    """
+    stats = {"called": 0, "evaluated": 0, "alerted": 0, "already_known": 0,
+             "consensus": 0}
+
+    rows = store.recent_mentions()
+    if not rows:
+        return stats
+
+    by_ca: dict[str, set] = {}
+    for r in rows:
+        ca, ch = r.get("ca"), r.get("channel")
+        if ca and ch:
+            by_ca.setdefault(ca, set()).add(ch)
+    stats["called"] = len(by_ca)
+
+    # Consensus first — several channels on one token is the strongest thing
+    # this feed produces, and it is what King watches these channels for.
+    ordered = sorted(by_ca.items(),
+                     key=lambda kv: -social.weighted_count(kv[1]))
+
+    for ca, channel_set in ordered[:config.SOCIAL_CALL_LIMIT]:
+        if ca in already:
+            stats["already_known"] += 1
+            continue
+        try:
+            chain, market = chains.resolve_chain(ca)
+            if not chain or not market or not market.ok:
+                continue
+
+            adapter = chains.get_adapter(chain)
+            weighted = social.weighted_count(channel_set)
+            if weighted >= config.VELOCITY_MIN_CHANNELS:
+                stats["consensus"] += 1
+
+            safety = adapter.safety(ca, market.pair_address)
+            ev = scoring.evaluate(
+                market, safety, chain,
+                social_channels=weighted,
+                smart_wallets=smartmoney.recent_buys(chain, store).get(ca, 0),
+                macro=macro, hot_meta=hot_meta,
+                tiers=("first_moon", "second_moon", "boosted", "social_call"),
+            )
+            ev.called_by = sorted(channel_set)
+            stats["evaluated"] += 1
+
+            if not ev.should_track:
+                continue
+
+            channels_txt = ", ".join(ev.called_by[:4])
+            log.info("[%s] CALLED %s (%s) %s %d/100 — %d channel(s): %s",
+                     chain, market.name, market.symbol, ev.tier.tier,
+                     ev.conviction.score, len(ev.called_by), channels_txt)
+
+            sent_ok = False
+            if ev.should_alert and not dry_run:
+                res = alerts.send_signal(ev, adapter)
+                sent_ok = res.ok
+            if ev.should_alert:
+                stats["alerted"] += 1
+            already[ca] = time.time()
+            store.record_signal(ev, adapter, sent_ok=sent_ok)
+
+        except Exception as e:
+            log.warning("social call %s failed: %s", str(ca)[:12], e)
+
+    log.info("social calls: %d tokens called, %d with consensus, "
+             "%d evaluated, %d alerted",
+             stats["called"], stats["consensus"],
+             stats["evaluated"], stats["alerted"])
+    return stats
+
+
 def portfolio_blocked() -> tuple[bool, str]:
     """
     Position cap and cooling-off.
@@ -492,6 +578,7 @@ def main() -> int:
         log.info("purged %d stale watchlist entries", purged)
 
     revived = revisit_watchlist(social_counts, args.dry_run, already, macro)
+    called = scan_social_calls(args.dry_run, already, macro, hot_meta)
 
     targets = [args.chain] if args.chain else config.enabled_chains()
     runs = []
@@ -527,7 +614,13 @@ def main() -> int:
             worst = sorted(r.gate_fails.items(), key=lambda x: -x[1])[:5]
             print("        blocked by: " +
                   ", ".join(f"{k}×{v}" for k, v in worst))
+    if called.get("called"):
+        print(f"  {'channel calls':<18} "
+              f"found {called['called']:>3}  scored {called['evaluated']:>3}  "
+              f"alerts {called['alerted']:>2}  "
+              f"consensus {called['consensus']:>3}")
     print("-" * 62)
+    total_alerts += called.get("alerted", 0)
     detail = f"  {total_alerts} alert(s)"
     if total_revived:
         detail += f" ({total_revived} from the watchlist)"

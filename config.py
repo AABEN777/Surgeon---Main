@@ -150,6 +150,22 @@ THRESHOLDS = {
         "min_turnover_1h":   0.04,
         "min_change_5m":   -15.0,
     },
+    # Tokens the channels are calling. A different question entirely: not
+    # "is this early enough to be worth a look" but "several people who watch
+    # this full-time think it is running". A runner heading for $10m is far
+    # outside every tier above — boosted stops at $5m — so a token three
+    # channels are shouting about would find no tier and vanish silently.
+    "social_call": {
+        "min_liquidity":  15_000,
+        "min_fdv":        20_000,
+        "max_fdv":    50_000_000,
+        "min_age_hours":     0.17,
+        "max_age_hours":   168.0,     # a week
+        "min_change_1h":   -20.0,     # consensus matters more than momentum
+        "min_volume_1h":  10_000,
+        "min_turnover_1h":   0.05,
+        "min_change_5m":   -30.0,
+    },
 }
 
 # Newer chains trade at a fraction of Solana's dollar sizes. REDDIT on
@@ -269,6 +285,16 @@ CONVICTION = {
     # muted by evening.
     "min_to_track": 30,     # recorded, watched, feeds the outcome data
     "min_to_alert": 60,     # actually reaches Telegram
+    # Channel calls are not gated on this score at all. Conviction is
+    # calibrated for fresh launches — it docks a 28h-old token for being old
+    # and gives it no age bonus, which is right when the claim is "this is
+    # early" and wrong when the claim is "four channels are on this". Setting
+    # a separate number here was guesswork: the first genuine case landed at
+    # 35 against a bar of 38, which says more about the bar than the token.
+    #
+    # What gates a channel call instead: real consensus, a matched tier, and
+    # the same safety and scam checks as everything else. The score is still
+    # computed and shown — it just does not decide.
     "bands": {"HIGH": 80, "GOOD": 60, "WATCH": 30},
 }
 
@@ -336,11 +362,17 @@ SMART_MONEY = {
 
 # ── SOCIAL CHANNELS ───────────────────────────────────────────────
 # (handle, label, weight). Weight is how much a mention counts toward
-# consensus. Paid-promotion channels post what they are paid to post, so
-# three of them agreeing is one advertiser's budget, not three opinions.
-# This is a stopgap — roadmap item 4 replaces these guesses with each
-# channel's measured hit rate.
-ORGANIC, PROMO = 1.0, 0.35
+# consensus.
+#
+# Every channel counts equally for now. An earlier version discounted nine of
+# them to 0.35 on the belief they were paid-promotion outlets — they are not,
+# they are ordinary alpha channels whose owners are sometimes paid to post,
+# which is true of most of this list. That weight was invented, not measured,
+# and an invented penalty is worse than none.
+#
+# The mechanism stays because roadmap item 4 fills it with each channel's
+# measured hit rate against outcomes. Until then, one channel, one vote.
+ORGANIC = PROMO = 1.0
 
 TELEGRAM_CHANNELS = [
     ("Blessedmemecalls",       "Blessed",             ORGANIC),
@@ -368,7 +400,7 @@ TELEGRAM_CHANNELS = [
     ("SonicsAlphacalls",       "Sonics Alpha",        ORGANIC),
     ("newsgraph",              "Newsgraph",           ORGANIC),
 
-    # Paid-promotion channels — counted, but discounted.
+    # Added later; same standing as every channel above.
     ("EthansCrypto",           "Ethans Crypto",       PROMO),
     ("DegenPlayhouse",         "Degen Playhouse",     PROMO),
     ("SlavicCalls",            "Slavic Calls",        PROMO),
@@ -384,7 +416,8 @@ CHANNEL_WEIGHTS = {label: weight for _, label, weight in TELEGRAM_CHANNELS}
 PROMO_CHANNELS = {label for _, label, w in TELEGRAM_CHANNELS if w < ORGANIC}
 
 SOCIAL_WINDOW_SECONDS   = 7200   # 2h velocity window
-VELOCITY_MIN_CHANNELS   = 2      # unique channels to fire a velocity alert
+VELOCITY_MIN_CHANNELS   = 2      # weighted channels for consensus
+SOCIAL_CALL_LIMIT       = 40     # called tokens evaluated per scan
 
 # ── POSITION WATCH (signal-only, no execution) ────────────────────
 WATCH = {

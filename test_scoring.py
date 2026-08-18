@@ -636,23 +636,23 @@ def test_channel_weighting():
                 return pts
         return 0
 
-    organic = social.weighted_count(["Blessed", "Catfish by Poe", "Kook"])
-    paid = social.weighted_count(["Ethans Crypto", "Slavic Calls", "Dogen Dojo"])
-    check("three organic channels", organic, 3.0)
-    check_true("three paid channels count for far less", paid < 1.5)
-    check("organic consensus earns full bonus", bonus(organic), 20)
-    check_true("paid-only consensus does not", bonus(paid) < 20)
-
-    # Genuine overlap should still be rewarded when promo channels join in.
-    mixed = social.weighted_count(["Blessed", "Catfish by Poe", "Ethans Crypto"])
-    check_true("real overlap still scores", bonus(mixed) >= 12)
+    # Every channel counts equally. An earlier version discounted nine of
+    # them on the belief they were paid-promotion outlets; they are ordinary
+    # alpha channels whose owners are sometimes paid to post, which is true of
+    # most of this list. The weight was invented rather than measured.
+    older = social.weighted_count(["Blessed", "Catfish by Poe", "Kook"])
+    newer = social.weighted_count(["Ethans Crypto", "Slavic Calls", "Dogen Dojo"])
+    check("three channels weigh three", older, 3.0)
+    check("no channel is discounted", newer, older)
+    check("three channels earn the consensus bonus", bonus(older), 20)
 
     # An unknown channel is treated as organic rather than silently ignored.
     check("unknown channel counts as organic",
           social.weighted_count(["Some New Channel"]), 1.0)
 
     check("all channels registered", len(config.TELEGRAM_CHANNELS), 33)
-    check("promo set matches", len(config.PROMO_CHANNELS), 9)
+    check("one channel one vote",
+          sorted({w for *_, w in config.TELEGRAM_CHANNELS}), [1.0])
 
 
 def test_meta_detection():
@@ -815,6 +815,72 @@ def test_entrypoints_resolve():
         check(f"{fn.__module__}.{fn.__name__} resolves", undefined_names(fn), [])
 
 
+def test_channel_calls():
+    """
+    Mentions were only used to top up the score of tokens Surgeon had already
+    found, so 76 of 78 were discarded — the whole point of watching these
+    channels is the runner our own scan would never surface.
+
+    Channel calls are candidates in their own right, judged on consensus and
+    safety rather than on resembling a fresh launch.
+    """
+    print("\nchannel calls")
+    CA = "9x" + "R" * 42
+    TIERS = ("first_moon", "second_moon", "boosted", "social_call")
+
+    def runner(**kw):
+        base = dict(ca=CA, chain="solana", name="Late Runner", symbol="RUN",
+                    price_usd=0.0081, liquidity_usd=420000, fdv=8_100_000,
+                    market_cap=8_100_000, volume_24h=6_400_000,
+                    volume_1h=980_000, volume_5m=61_000, change_5m=3.2,
+                    change_1h=41.0, change_24h=310.0, buys_5m=190,
+                    sells_5m=140, age_hours=28.0, age_known=True,
+                    dex="raydium")
+        base.update(kw)
+        return TokenMarket(**base)
+
+    clean = SafetyReport(ca=CA, chain="solana", sources=["rugcheck"],
+                         top_holder_pct=3.1, insider_pct=4.0,
+                         holder_count=9400, lp_locked_pct=100.0,
+                         creator_holds_pct=0.05, risk_raw=1.0)
+    rugged = SafetyReport(ca=CA, chain="solana", sources=["rugcheck"],
+                          top_holder_pct=34.0, insider_pct=41.0,
+                          holder_count=22, creator_holds_pct=19.0,
+                          risk_raw=1.0)
+
+    # An $8m runner is past every discovery tier — boosted stops at $5m — so
+    # without a tier of its own it would vanish silently.
+    check("no discovery tier reaches a runner",
+          scoring.classify_tier(runner(), "solana", session="NORMAL").tier, None)
+    check("social tier does",
+          scoring.classify_tier(runner(), "solana", session="NORMAL",
+                                tiers=("social_call",)).tier, "social_call")
+
+    def called(social, safety=clean, market=None):
+        return scoring.evaluate(market or runner(), safety, "solana",
+                                social_channels=social, tiers=TIERS)
+
+    check_true("four organic channels alert", called(3.0).should_alert)
+    check_true("two organic channels alert", called(2.0).should_alert)
+    check_true("one channel is not consensus", not called(1.0).should_alert)
+    check_true("a single channel is not consensus",
+               not called(1.0).should_alert)
+
+    # Consensus never overrides safety.
+    check("consensus on a rug is still a rug",
+          called(3.0, safety=rugged).rejected_by, "scam_pattern")
+    check("consensus on a dead pool still fails the tier",
+          called(3.0, market=runner(liquidity_usd=900, volume_1h=200,
+                                    volume_24h=400, fdv=40000)).rejected_by,
+          "tier")
+
+    # The score is computed and shown, but does not decide here.
+    low = called(2.0)
+    check_true("alerts despite scoring below the discovery floor",
+               low.conviction.score < config.CONVICTION["min_to_track"]
+               and low.should_alert)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -894,6 +960,7 @@ def main():
     test_meta_detection()
     test_alert_threshold()
     test_entrypoints_resolve()
+    test_channel_calls()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

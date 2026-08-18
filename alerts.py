@@ -105,6 +105,7 @@ TIER_HEADER = {
     "first_moon":  "🌑 FIRST MOON",
     "second_moon": "🌕 SECOND MOON",
     "boosted":     "🚀 BOOSTED",
+    "social_call": "📢 CHANNEL CALL",
 }
 
 BAND_ICON = {"HIGH": "🔥", "GOOD": "✅", "WATCH": "👀", "SKIP": "💤"}
@@ -128,6 +129,13 @@ def format_signal(ev, adapter) -> str:
         f"🕐 {age(m.age_hours, m.age_known)}   ·   {esc(m.dex or 'unknown dex')}"
         + (f"   ·   {esc(m.launchpad)}" if m.launchpad else ""),
     ]
+
+    called = getattr(ev, "called_by", None)
+    if called:
+        word = "channel" if len(called) == 1 else "channels"
+        lines.append(f"📢 Called by {len(called)} {word}: "
+                     f"<b>{esc(', '.join(called[:4]))}</b>"
+                     + (f" +{len(called) - 4} more" if len(called) > 4 else ""))
 
     if c.meta_term:
         lines.append(f"🔥 Riding the <b>{esc(c.meta_term)}</b> meta")
