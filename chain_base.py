@@ -115,6 +115,17 @@ class SafetyReport:
         return bool(self.unavailable)
 
     @property
+    def rug_score_meaningful(self) -> bool:
+        """
+        Whether a low risk score reflects a clean token or an unexamined one.
+
+        The score is only informative once there is something to examine. A
+        real holder base is the cheapest proxy: hundreds of holders means the
+        distribution checks actually ran on data.
+        """
+        return (self.holder_count or 0) >= config.SAFETY["rug_score_min_holders"]
+
+    @property
     def verified(self) -> bool:
         """Did any safety source actually answer?"""
         return bool(self.sources)
@@ -146,13 +157,22 @@ class SafetyReport:
         elif "lp_locked_pct" in self.unavailable:
             bits.append("LP n/a")
         if self.risk_raw is not None:
-            # RugCheck's raw score runs low-is-safe, which "Risk 1" does not
-            # convey on its own — anything above 500 is rejected outright, so
-            # everything that reaches an alert sits in the lower band.
+            # RugCheck's raw score is built from risks it has detected, and
+            # a token minutes old has almost nothing to detect — no holder
+            # history, no LP age, no trading record. So a 1 means "nothing
+            # flagged yet", not "verified safe", and labelling it clean was
+            # the same absence-as-evidence mistake as the zeroed fields.
             r = self.risk_raw
-            grade = ("clean" if r <= 50 else
-                     "minor" if r <= 200 else
-                     "elevated" if r <= 500 else "severe")
+            if r <= 50 and not self.rug_score_meaningful:
+                grade = "unproven"
+            elif r <= 50:
+                grade = "clean"
+            elif r <= 200:
+                grade = "minor"
+            elif r <= 500:
+                grade = "elevated"
+            else:
+                grade = "severe"
             bits.append(f"Rug {r:g} ({grade})")
         if self.buy_tax_pct is not None or self.sell_tax_pct is not None:
             b = self.buy_tax_pct if self.buy_tax_pct is not None else 0

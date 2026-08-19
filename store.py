@@ -239,6 +239,11 @@ class Store:
             "social_channels": c.social_channels,
             "smart_wallets":   c.smart_wallets,
             "safety_verdict":  s.verdict,
+            # Needed by the watcher: DEV_SOLD compares the deployer's holding
+            # now against what it was at signal time. Without this the check
+            # could never fire, because there was nothing to compare against.
+            "creator_holds_pct": s.creator_holds_pct,
+            "dev_held":        (s.creator_holds_pct or 0) > 0.01,
             "top_holder_pct":  s.top_holder_pct,
             "lp_locked_pct":   s.lp_locked_pct,
             "safety_sources":  ",".join(s.sources),

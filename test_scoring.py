@@ -945,6 +945,54 @@ def test_lp_zero_corroboration():
     check_true("unknown creator cannot clear it", not verdict(None, 0.0, 17900))
 
 
+def test_rug_score_and_dev_sold():
+    """
+    Two readings that meant less than they appeared to.
+
+    RugCheck's score is built from risks it has detected, and a token minutes
+    old has almost nothing to detect. A 1 therefore means "nothing flagged
+    yet", not "verified safe" — and most tokens King saw scoring 1 were rugs.
+
+    DEV_SOLD compared against a `dev_held` field that was never written, so
+    the check could not fire at all.
+    """
+    import watch, time as _t
+    print("\nrug score and dev sold")
+
+    def display(raw, holders):
+        return SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                            top_holder_pct=6.2, lp_locked_pct=100.0,
+                            risk_raw=raw, holder_count=holders).display()
+
+    check_true("low score on an unexamined token is not clean",
+               "unproven" in display(1, 40))
+    check_true("low score with a real holder base is clean",
+               "clean" in display(1, 17900))
+    check_true("high score still reads severe", "severe" in display(11400, 665))
+
+    now = _t.time()
+
+    def dev_events(held_then, holds_now, flag=True):
+        row = {"ca": "x", "chain": "solana", "name": "T", "symbol": "T",
+               "entry_price": 1.0, "peak_price": 1.0, "alerted_at": now - 1800,
+               "dev_held": flag, "creator_holds_pct": held_then}
+        market = TokenMarket(ca="x", chain="solana", name="T", symbol="T",
+                             price_usd=1.1, liquidity_usd=40000, fdv=60000,
+                             volume_1h=24000, volume_5m=2000, dex="raydium")
+        safety = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                              creator_holds_pct=holds_now, top_holder_pct=5.0)
+        return [e for e, _ in watch.evaluate_position(row, market, None,
+                                                      set(), safety)]
+
+    check_true("emptied deployer wallet fires", "DEV_SOLD" in dev_events(4.0, 0.0))
+    check_true("deployer shedding most of its bag fires",
+               "DEV_SOLD" in dev_events(4.0, 1.5))
+    check_true("trimming a little does not",
+               "DEV_SOLD" not in dev_events(4.0, 3.6))
+    check_true("a deployer that never held anything cannot sell",
+               "DEV_SOLD" not in dev_events(0.0, 0.0, flag=False))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1026,6 +1074,7 @@ def main():
     test_entrypoints_resolve()
     test_channel_calls()
     test_lp_zero_corroboration()
+    test_rug_score_and_dev_sold()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

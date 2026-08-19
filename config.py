@@ -210,6 +210,9 @@ SAFETY = {
     "max_buy_tax_pct":      10.0,   # EVM
     "max_sell_tax_pct":     10.0,   # EVM
     "rugcheck_raw_block":   500,    # Solana: raw score above this = block
+    # A low score on a token with no holder base means the checks had nothing
+    # to examine, not that the token is safe.
+    "rug_score_min_holders": 300,
     "reject_on_honeypot":   True,
     "reject_on_mint_auth":  True,
     "reject_on_freeze":     True,
@@ -457,6 +460,7 @@ WATCH = {
     # before price does, so lean on the leading indicator.
     "volume_fade_ratio":  0.45,
     "volume_fade_min_pnl":  10,
+    "dev_sold_fraction":   0.5,   # deployer shedding this much of its bag
     "whale_recheck_hours":   2,
     "whale_recheck_min_pnl": 30,
     "whale_top_holder_pct":  30,

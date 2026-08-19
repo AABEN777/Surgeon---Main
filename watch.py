@@ -119,10 +119,22 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
             out.append((key, f"{market.symbol} up {pnl:+.0f}% since signal"))
 
     # -- dev wallet ------------------------------------------------
-    if safety is not None and "DEV_SOLD" not in fired:
-        creator_pct = safety.creator_holds_pct
-        if creator_pct is not None and creator_pct <= 0.01 and row.get("dev_held"):
-            out.append(("DEV_SOLD", "creator wallet emptied since signal"))
+    # Compares the deployer's holding now against what it held when the
+    # signal fired. An earlier version read a `dev_held` field that was never
+    # written, so this could not fire at all.
+    if safety is not None and "DEV_SOLD" not in fired and row.get("dev_held"):
+        now_pct = safety.creator_holds_pct
+        then_pct = float(row.get("creator_holds_pct") or 0)
+        if now_pct is not None and then_pct > 0:
+            dumped = (then_pct - now_pct) / then_pct
+            if now_pct <= 0.01:
+                out.append(("DEV_SOLD",
+                            f"deployer wallet emptied — held {then_pct:.2f}% "
+                            f"at signal"))
+            elif dumped >= config.WATCH["dev_sold_fraction"]:
+                out.append(("DEV_SOLD",
+                            f"deployer sold {dumped:.0%} of its holding "
+                            f"({then_pct:.2f}% -> {now_pct:.2f}%)"))
 
     # -- whale concentration appearing after entry -----------------
     if (safety is not None and "WHALE_STOP" not in fired
@@ -250,9 +262,13 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
             # Safety is only re-pulled when an event could depend on it.
             safety = None
             held_hours = (time.time() - float(row.get("alerted_at") or 0)) / 3600
-            needs_safety = (held_hours >= config.WATCH["whale_recheck_hours"]
-                            and pnl >= config.WATCH["whale_recheck_min_pnl"])
-            if needs_safety and "WHALE_STOP" not in fired:
+            whale_due = (held_hours >= config.WATCH["whale_recheck_hours"]
+                         and pnl >= config.WATCH["whale_recheck_min_pnl"]
+                         and "WHALE_STOP" not in fired)
+            # A deployer dumping is worth knowing about immediately, not only
+            # once a position is hours old and in profit.
+            dev_due = bool(row.get("dev_held")) and "DEV_SOLD" not in fired
+            if whale_due or dev_due:
                 safety = adapter.safety(ca, market.pair_address)
 
             events = evaluate_position(row, market, adapter, fired, safety)
