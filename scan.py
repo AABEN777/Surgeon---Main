@@ -226,82 +226,109 @@ def scan_social_calls(dry_run: bool, already: dict[str, float],
     Evaluate what the channels are calling.
 
     Mentions were only ever used to top up the score of tokens Surgeon had
-    already discovered — so of 78 mentions, 76 were thrown away because our
-    own discovery had not surfaced them. That is backwards. A channel posting
-    a contract is a candidate in its own right, and the whole point of
-    watching these channels is the runner Surgeon's own scan would never see.
+    already discovered, so of 78 mentions 76 were discarded. That is
+    backwards: the whole point of watching these channels is the runner our
+    own scan would never surface. Each mention is a candidate in its own
+    right, passing the same safety, scam and tier gates.
 
-    Every token still passes the same safety, scam and conviction gates. What
-    changes is that it gets looked at, and that the alert says who called it.
+    Chains come from the mention rows, which resolved them in bulk during
+    scraping. Re-resolving here cost four requests a token and blew this
+    job's timeout.
     """
     stats = {"called": 0, "evaluated": 0, "alerted": 0, "already_known": 0,
-             "consensus": 0}
+             "consensus": 0, "unresolved": 0}
 
     rows = store.recent_mentions()
     if not rows:
         return stats
 
-    by_ca: dict[str, set] = {}
+    channels_by_ca: dict[str, set] = {}
+    chain_by_ca: dict[str, str] = {}
     for r in rows:
         ca, ch = r.get("ca"), r.get("channel")
-        if ca and ch:
-            by_ca.setdefault(ca, set()).add(ch)
-    stats["called"] = len(by_ca)
+        if not ca or not ch:
+            continue
+        channels_by_ca.setdefault(ca, set()).add(ch)
+        if r.get("chain"):
+            chain_by_ca[ca] = r["chain"]
+    stats["called"] = len(channels_by_ca)
 
     # Consensus first — several channels on one token is the strongest thing
-    # this feed produces, and it is what King watches these channels for.
-    ordered = sorted(by_ca.items(),
+    # this feed produces, and it is what these channels are watched for.
+    ordered = sorted(channels_by_ca.items(),
                      key=lambda kv: -social.weighted_count(kv[1]))
 
+    shortlist = []
     for ca, channel_set in ordered[:config.SOCIAL_CALL_LIMIT]:
         if ca in already:
             stats["already_known"] += 1
             continue
-        try:
-            chain, market = chains.resolve_chain(ca)
-            if not chain or not market or not market.ok:
-                continue
+        chain = chain_by_ca.get(ca)
+        if not chain:
+            stats["unresolved"] += 1
+            continue
+        shortlist.append((ca, chain, channel_set))
 
-            adapter = chains.get_adapter(chain)
-            weighted = social.weighted_count(channel_set)
-            if weighted >= config.VELOCITY_MIN_CHANNELS:
-                stats["consensus"] += 1
+    if not shortlist:
+        return stats
 
-            safety = adapter.safety(ca, market.pair_address)
-            ev = scoring.evaluate(
-                market, safety, chain,
-                social_channels=weighted,
-                smart_wallets=smartmoney.recent_buys(chain, store).get(ca, 0),
-                macro=macro, hot_meta=hot_meta,
-                tiers=("first_moon", "second_moon", "boosted", "social_call"),
-            )
-            ev.called_by = sorted(channel_set)
-            stats["evaluated"] += 1
+    # One market request per thirty tokens, per chain.
+    by_chain: dict[str, list] = {}
+    for ca, chain, chans in shortlist:
+        by_chain.setdefault(chain, []).append((ca, chans))
 
-            if not ev.should_track:
-                continue
+    for chain, entries in by_chain.items():
+        adapter = chains.get_adapter(chain)
+        markets = chain_base.dexscreener_markets(
+            [ca for ca, _ in entries], chain,
+            config.CHAINS[chain]["dexscreener_id"])
+        smart = smartmoney.recent_buys(chain, store)
 
-            channels_txt = ", ".join(ev.called_by[:4])
-            log.info("[%s] CALLED %s (%s) %s %d/100 — %d channel(s): %s",
-                     chain, market.name, market.symbol, ev.tier.tier,
-                     ev.conviction.score, len(ev.called_by), channels_txt)
+        for ca, channel_set in entries:
+            try:
+                market = markets.get(ca)
+                if not market or not market.ok or market.liquidity_usd <= 0:
+                    continue
 
-            sent_ok = False
-            if ev.should_alert and not dry_run:
-                res = alerts.send_signal(ev, adapter)
-                sent_ok = res.ok
-            if ev.should_alert:
-                stats["alerted"] += 1
-            already[ca] = time.time()
-            store.record_signal(ev, adapter, sent_ok=sent_ok)
+                weighted = social.weighted_count(channel_set)
+                if weighted >= config.VELOCITY_MIN_CHANNELS:
+                    stats["consensus"] += 1
 
-        except Exception as e:
-            log.warning("social call %s failed: %s", str(ca)[:12], e)
+                safety = adapter.safety(ca, market.pair_address)
+                ev = scoring.evaluate(
+                    market, safety, chain,
+                    social_channels=weighted,
+                    smart_wallets=smart.get(ca, 0),
+                    macro=macro, hot_meta=hot_meta,
+                    tiers=("first_moon", "second_moon", "boosted",
+                           "social_call"),
+                )
+                ev.called_by = sorted(channel_set)
+                stats["evaluated"] += 1
 
-    log.info("social calls: %d tokens called, %d with consensus, "
-             "%d evaluated, %d alerted",
-             stats["called"], stats["consensus"],
-             stats["evaluated"], stats["alerted"])
+                if not ev.should_track:
+                    continue
+
+                log.info("[%s] CALLED %s (%s) %s %d/100 — %d channel(s): %s",
+                         chain, market.name, market.symbol, ev.tier.tier,
+                         ev.conviction.score, len(ev.called_by),
+                         ", ".join(ev.called_by[:4]))
+
+                sent_ok = False
+                if ev.should_alert and not dry_run:
+                    sent_ok = alerts.send_signal(ev, adapter).ok
+                if ev.should_alert:
+                    stats["alerted"] += 1
+                already[ca] = time.time()
+                store.record_signal(ev, adapter, sent_ok=sent_ok)
+
+            except Exception as e:
+                log.warning("social call %s failed: %s", str(ca)[:12], e)
+
+    log.info("social calls: %d called, %d with consensus, %d evaluated, "
+             "%d alerted, %d unresolved",
+             stats["called"], stats["consensus"], stats["evaluated"],
+             stats["alerted"], stats["unresolved"])
     return stats
 
 

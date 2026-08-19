@@ -417,7 +417,10 @@ PROMO_CHANNELS = {label for _, label, w in TELEGRAM_CHANNELS if w < ORGANIC}
 
 SOCIAL_WINDOW_SECONDS   = 7200   # 2h velocity window
 VELOCITY_MIN_CHANNELS   = 2      # weighted channels for consensus
-SOCIAL_CALL_LIMIT       = 40     # called tokens evaluated per scan
+# Each evaluated call costs a safety lookup, so this is a time budget rather
+# than a philosophical limit. Consensus tokens are sorted first, so the cap
+# trims the least-supported calls.
+SOCIAL_CALL_LIMIT       = 20
 
 # ── POSITION WATCH (signal-only, no execution) ────────────────────
 WATCH = {
