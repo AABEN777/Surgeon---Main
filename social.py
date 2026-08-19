@@ -222,36 +222,64 @@ def scrape_all(channels=None, limit: Optional[int] = None,
 def resolve_chains(mentions: list[Mention],
                    max_lookups: int = 12) -> list[Mention]:
     """
-    Attach a chain to each mention.
+    Attach a chain to each mention, in bulk.
 
-    Solana addresses are unambiguous and free. An EVM address could belong to
-    any of four chains, and resolving it means asking each in turn which holds
-    liquidity — four network calls per token. Capped hard, because knowing the
-    chain is a convenience here: the scanner resolves it again anyway when it
-    evaluates the token.
+    The earlier version asked each EVM chain in turn which one held a token —
+    four requests per address, most 404ing, each falling through to a
+    throttled GeckoTerminal call. That was 328 of the social job's 335
+    seconds, against five spent actually scraping.
+
+    DexScreener's token endpoint takes thirty addresses at once and returns
+    pairs from every chain, so one request resolves thirty tokens. The chain
+    is simply whichever pair holds the deepest liquidity.
     """
-    lookups = 0
-    skipped = 0
-    cache: dict[str, Optional[str]] = {}
+    from chain_base import http_get, safe_float, DEX_BASE
 
+    # Solana addresses are unambiguous and cost nothing.
+    unresolved = []
     for mn in mentions:
-        if mn.ca in cache:
-            mn.chain = cache[mn.ca]
-            continue
         candidates = chains.detect_chains(mn.ca)
         if len(candidates) == 1:
             mn.chain = candidates[0]
-        elif candidates and lookups < max_lookups:
-            lookups += 1
-            key, _ = chains.resolve_chain(mn.ca)
-            mn.chain = key
         elif candidates:
-            skipped += 1          # left unresolved rather than paying for it
-        cache[mn.ca] = mn.chain
+            unresolved.append(mn)
 
-    if skipped:
-        log.info("chain resolution: %d looked up, %d left for the scanner",
-                 lookups, skipped)
+    if not unresolved:
+        return mentions
+
+    by_addr = {}
+    for mn in unresolved:
+        by_addr.setdefault(mn.ca.lower(), []).append(mn)
+
+    wanted = {c: c for c in {m.ca for m in unresolved}}
+    enabled = {config.CHAINS[k]["dexscreener_id"]: k
+               for k in config.enabled_chains()}
+
+    addresses = list({m.ca for m in unresolved})
+    resolved = 0
+    for i in range(0, len(addresses), 30):
+        chunk = addresses[i:i + 30]
+        data = http_get(f"{DEX_BASE}/latest/dex/tokens/{','.join(chunk)}")
+        if not data:
+            continue
+
+        deepest: dict[str, tuple[float, str]] = {}
+        for pair in (data.get("pairs") or []):
+            chain_key = enabled.get(pair.get("chainId"))
+            if not chain_key:
+                continue
+            addr = ((pair.get("baseToken") or {}).get("address") or "").lower()
+            liq = safe_float((pair.get("liquidity") or {}).get("usd"))
+            if addr in by_addr and liq > deepest.get(addr, (0, ""))[0]:
+                deepest[addr] = (liq, chain_key)
+
+        for addr, (_, chain_key) in deepest.items():
+            for mn in by_addr.get(addr, []):
+                mn.chain = chain_key
+                resolved += 1
+
+    log.info("chain resolution: %d of %d evm addresses resolved in %d request(s)",
+             resolved, len(addresses), (len(addresses) + 29) // 30)
     return mentions
 
 

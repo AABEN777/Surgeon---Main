@@ -347,9 +347,8 @@ def load_social_counts() -> dict[str, int]:
     counts = {ca: social.weighted_count(chs) for ca, chs in by_ca.items()}
     hot = sum(1 for n in counts.values() if n >= config.VELOCITY_MIN_CHANNELS)
     if counts:
-        log.info("social: %d tokens mentioned, %d reaching consensus "
-                 "(promo channels weighted at %.0f%%)",
-                 len(counts), hot, config.PROMO * 100)
+        log.info("social: %d tokens mentioned, %d reaching consensus",
+                 len(counts), hot)
     return counts
 
 

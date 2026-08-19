@@ -114,6 +114,9 @@ def test_alerts():
         scoring.evaluate(dataclasses.replace(REDDIT, age_hours=0.20), bare, "robinhood"), rh)
     check_true("unverified is stated loudly", "treat as unverified" in unv)
 
+    # Module-level state, so a second run in the same process would see the
+    # first run's mark and report a false failure.
+    alerts._last_alert.clear()
     ca = "DedupeTest"
     first = alerts.should_send(ca)
     alerts.mark_sent(ca)
@@ -615,10 +618,17 @@ def test_scam_flags():
     mild = SafetyReport(ca="e", chain="solana", sources=["rugcheck"],
                         top_holder_pct=5.0, insider_pct=3.0, holder_count=400,
                         lp_locked_pct=100.0, creator_holds_pct=0.1)
+    # Asserting on should_alert here made the test depend on the clock:
+    # evaluate() reads the real session, and PEAK versus DEAD is a fifteen
+    # point swing across the alert floor. The intent is that one warning
+    # informs without vetoing, which is what these check.
     ev2 = scoring.evaluate(hot, mild, "solana", social_channels=3)
-    check_true("single warning still alerts", ev2.should_alert)
+    check("single warning does not reject", ev2.rejected_by, None)
+    check_true("single warning still tracked", ev2.should_track)
     check_true("but it is recorded",
                any(f.code == "TOP_HOLDER" for f in ev2.conviction.risk_flags))
+    check_true("and it costs conviction",
+               risk.total_penalty(ev2.conviction.risk_flags) < 0)
 
 
 def test_channel_weighting():
@@ -874,11 +884,12 @@ def test_channel_calls():
                                     volume_24h=400, fdv=40000)).rejected_by,
           "tier")
 
-    # The score is computed and shown, but does not decide here.
+    # The score is computed and shown, but does not decide here. Asserting
+    # the score lands below the discovery floor made this depend on the
+    # session — the same token scores fifteen points higher at PEAK.
     low = called(2.0)
-    check_true("alerts despite scoring below the discovery floor",
-               low.conviction.score < config.CONVICTION["min_to_track"]
-               and low.should_alert)
+    check_true("consensus alerts regardless of score", low.should_alert)
+    check_true("score still computed", low.conviction.score > 0)
 
 
 def main():
