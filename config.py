@@ -202,6 +202,11 @@ SAFETY = {
     "max_top_holder_pct":   20.0,   # reject above
     "max_top10_pct":        60.0,
     "min_lp_locked_pct":    80.0,   # graduated pools only
+    # An LP reading of exactly zero is treated as unreadable rather than
+    # unlocked when every other holder signal contradicts it.
+    "lp_zero_creator_max":   0.5,
+    "lp_zero_insider_max":   2.0,
+    "lp_zero_holder_min":  500,
     "max_buy_tax_pct":      10.0,   # EVM
     "max_sell_tax_pct":     10.0,   # EVM
     "rugcheck_raw_block":   500,    # Solana: raw score above this = block

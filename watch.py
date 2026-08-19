@@ -221,7 +221,7 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
                                      peak_pnl=float(row.get("peak_pnl") or 0))
                 res.closed += 1
                 res.fire("RUGGED")
-                if not dry_run:
+                if not dry_run and row.get("alert_sent"):
                     alerts.send(alerts.format_watch(
                         "STOP_LOSS", row.get("name") or ca[:10], ca, -100.0,
                         adapter, "liquidity gone — position marked rugged"))
@@ -262,12 +262,18 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
                 store.update("signals", {"ca": ca, "outcome": "pending"},
                              {"peak_price": peak_price, "peak_pnl": peak_pnl})
 
+            # Positions scoring below the alert bar are tracked and graded
+            # for the outcome data, but were never announced — so a TP alert
+            # on one arrives about a token King has never heard of.
+            announced = bool(row.get("alert_sent"))
+
             for event, detail in events:
                 res.fire(event)
-                log.info("[%s] %s %s — %s", chain, event,
-                         row.get("symbol") or ca[:10], detail)
+                log.info("[%s] %s %s — %s%s", chain, event,
+                         row.get("symbol") or ca[:10], detail,
+                         "" if announced else "  [tracked only, not sent]")
                 store.mark_watch_event(ca, event, pnl)
-                if not dry_run:
+                if not dry_run and announced:
                     alerts.send(alerts.format_watch(
                         event, row.get("name") or ca[:10], ca, pnl,
                         adapter, detail))
@@ -315,8 +321,11 @@ def main() -> int:
         if r.get("chain"):
             by_chain.setdefault(r["chain"], []).append(r)
 
-    log.info("watching %d positions across %d chains",
-             len(open_rows), len(by_chain))
+    announced = sum(1 for r in open_rows if r.get("alert_sent"))
+    log.info("watching %d positions across %d chains "
+             "(%d announced, %d tracked silently)",
+             len(open_rows), len(by_chain), announced,
+             len(open_rows) - announced)
 
     results = {}
     for chain, rows in by_chain.items():

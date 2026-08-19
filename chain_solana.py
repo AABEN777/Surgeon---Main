@@ -132,6 +132,29 @@ class SolanaAdapter(ChainAdapter):
                         rep.hard_rejects.append(
                             f"lp_unlocked_{rep.lp_locked_pct:.0f}pct")
 
+        # A reading of exactly zero on a graduated pool is often "could not
+        # read this pool type" rather than "the deployer holds the LP" —
+        # RugCheck cannot see inside every venue pump.fun graduates into.
+        #
+        # Deciding which it is by corroboration: a genuinely dev-controlled
+        # LP does not coexist with a deployer holding nothing, no insider
+        # supply and a large holder base. The Cancer Vaccine was rejected on
+        # this with 17,900 holders, 0% insiders and 0% creator holdings.
+        if rep.lp_locked_pct == 0.0:
+            contradicted = (
+                (rep.creator_holds_pct is not None
+                 and rep.creator_holds_pct <= config.SAFETY["lp_zero_creator_max"])
+                and (rep.insider_pct is not None
+                     and rep.insider_pct <= config.SAFETY["lp_zero_insider_max"])
+                and (rep.holder_count or 0) >= config.SAFETY["lp_zero_holder_min"]
+            )
+            if contradicted:
+                rep.hard_rejects = [r for r in rep.hard_rejects
+                                    if not r.startswith("lp_unlocked")]
+                rep.lp_locked_pct = None
+                rep.unavailable.append("lp_locked_pct")
+                rep.flags.append("lp_unreadable_pool")
+
         # -- creator ----------------------------------------------
         creator = data.get("creator")
         if creator and creator != "11111111111111111111111111111111":

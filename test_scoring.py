@@ -504,6 +504,19 @@ def test_watcher():
                                       {"TP1", "TP2", "TP3"}))
     check_true("volume fade while in profit",
                "VOLUME_FADE" in events(row(), mkt(1.30, volume_5m=100)))
+
+    # Positions below the alert bar are tracked and graded for the outcome
+    # data but were never announced. Firing a TP alert on one delivers news
+    # about a token King has never heard of.
+    import inspect
+    src = inspect.getsource(watch.watch_chain)
+    check_true("watcher checks whether a position was announced",
+               "alert_sent" in src)
+    check_true("sending is guarded by it", "and announced" in src)
+    check_true("but events are still recorded",
+               "store.mark_watch_event" in src)
+    check_true("and positions still close",
+               "store.close_position" in src)
     check("healthy position fires nothing", events(row(), mkt(1.20)), [])
 
     # Whale concentration that appears after entry is a different thing from
@@ -892,6 +905,46 @@ def test_channel_calls():
     check_true("score still computed", low.conviction.score > 0)
 
 
+def test_lp_zero_corroboration():
+    """
+    An LP reading of exactly zero on a graduated pool often means "could not
+    read this pool type", not "the deployer holds the liquidity" — RugCheck
+    cannot see inside every venue pump.fun graduates into.
+
+    The Cancer Vaccine was rejected on this while holding 17,900 holders, 0%
+    insider supply and a deployer with nothing. A dev-controlled LP does not
+    look like that, so zero now needs corroboration before it rejects.
+    """
+    from chain_base import ChainAdapter
+    print("\nzero LP corroboration")
+
+    def verdict(creator, insider, holders):
+        rep = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                           lp_locked_pct=0.0, creator_holds_pct=creator,
+                           insider_pct=insider, holder_count=holders)
+        rep.hard_rejects.append("lp_unlocked_0pct")
+        s = config.SAFETY
+        contradicted = (
+            (rep.creator_holds_pct is not None
+             and rep.creator_holds_pct <= s["lp_zero_creator_max"])
+            and (rep.insider_pct is not None
+                 and rep.insider_pct <= s["lp_zero_insider_max"])
+            and (rep.holder_count or 0) >= s["lp_zero_holder_min"])
+        if contradicted:
+            rep.hard_rejects = [r for r in rep.hard_rejects
+                                if not r.startswith("lp_unlocked")]
+        return not rep.hard_rejects
+
+    check_true("clean token survives an unreadable pool",
+               verdict(0.0, 0.0, 17900))
+    check_true("deployer holding 22% still rejects", not verdict(22.0, 0.0, 17900))
+    check_true("31% bundled still rejects", not verdict(0.0, 31.0, 9000))
+    check_true("14 holders still rejects", not verdict(0.0, 0.0, 14))
+    # Unknown is not the same as clean — without the corroborating fields
+    # there is nothing to contradict the reading.
+    check_true("unknown creator cannot clear it", not verdict(None, 0.0, 17900))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -972,6 +1025,7 @@ def main():
     test_alert_threshold()
     test_entrypoints_resolve()
     test_channel_calls()
+    test_lp_zero_corroboration()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

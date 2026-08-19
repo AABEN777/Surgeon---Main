@@ -141,7 +141,22 @@ transfers per pool ourselves.
 **X account quality** is deferred rather than planned: it needs the Twitter
 API at $200/month plus account age and location analysis.
 
-## 7. EVM holder data gap
+## 7. Buildable now, not yet built
+
+**LP lock expiry.** Surgeon reads `lp_locked_pct: 100` as safe without
+knowing whether the lock expires in two hours. RugCheck returns `lockers`
+with unlock timestamps in a response already fetched every scan — this is
+parsing a field currently discarded.
+
+**Daily briefing.** One message: win rate, best and worst chain, conviction
+band performance, current meta, watchlist conversion. Replaces running SQL by
+hand every check-in and makes drift visible without being asked.
+
+**The 50-150% penalty band.** first_moon tokens up 50-150% at entry won 11.7%
+across 94 trades — the worst cell with a real sample, and a third of all
+signals land there. Both extremes beat it. Wait for 250+ trades before acting.
+
+## 8. EVM holder data gap
 
 On Base and BNB Chain, tokens under roughly fifteen minutes old have no
 holder distribution at all — GoPlus has not scanned them, Blockscout 404s.
@@ -156,7 +171,7 @@ directly from an RPC.
 
 ---
 
-## 8. Going live
+## 9. Going live
 
 Alerting is deliberately fail-closed. Sending requires **both** `--live` on
 the command and `SURGEON_LIVE=true` in the environment; either alone stays
