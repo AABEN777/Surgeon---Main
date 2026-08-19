@@ -86,6 +86,27 @@ def _bundled(safety) -> RiskFlag | None:
     return RiskFlag("BUNDLED", f"{pct:.0f}% bundled at launch", -14)
 
 
+def _lock_expiring(safety) -> RiskFlag | None:
+    """
+    Liquidity locked until this afternoon is not locked in any useful sense.
+
+    Scaled by how soon: a lock with an hour left is a countdown, one with a
+    day left is a schedule. Burned LP and locks with no expiry return nothing.
+    """
+    h = safety.lp_unlock_hours
+    if h is None:
+        return None
+    if h <= 0:
+        return RiskFlag("LP_EXPIRED", "lock already expired", -25, "danger")
+    if h <= 2:
+        return RiskFlag("LP_UNLOCKING", f"unlocks in {h * 60:.0f}m", -20, "danger")
+    if h <= 12:
+        return RiskFlag("LP_UNLOCKING", f"unlocks in {h:.0f}h", -12)
+    if h <= config.SAFETY["lp_min_lock_hours"]:
+        return RiskFlag("LP_UNLOCKING", f"unlocks in {h:.0f}h", -6)
+    return None
+
+
 def _thin_holders(safety) -> RiskFlag | None:
     n = safety.holder_count
     if n is None or n >= config.SCAM["min_holders"]:
@@ -111,6 +132,7 @@ CHECKS = (
     ("safety", _top_holder),
     ("market", _thin_volume),
     ("safety", _bundled),
+    ("safety", _lock_expiring),
     ("safety", _thin_holders),
     ("safety", _creator_heavy),
     ("safety", _unverified_safety),

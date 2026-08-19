@@ -993,6 +993,60 @@ def test_rug_score_and_dev_sold():
                "DEV_SOLD" not in dev_events(0.0, 0.0, flag=False))
 
 
+def test_lp_lock_expiry():
+    """
+    Surgeon read the lock percentage and discarded the horizon, so liquidity
+    locked for ninety days and liquidity unlocking this afternoon scored
+    identically. RugCheck returns unlock timestamps in a response already
+    being fetched every scan.
+    """
+    import risk
+    print("\nlp lock expiry")
+
+    def rep(hours, kind="timed"):
+        return SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                            top_holder_pct=3.0, insider_pct=2.0,
+                            holder_count=900, lp_locked_pct=100.0,
+                            lp_unlock_hours=hours, lp_lock_kind=kind,
+                            creator_holds_pct=0.1, risk_raw=1)
+
+    check_true("burned LP says so", "burned" in rep(None, "burned").display())
+    check_true("a long lock reads plainly",
+               "unlocks in 90d" in rep(2160).display())
+    # Rounding to whole hours made 90 minutes and two and a half hours both
+    # read as "2h", which are very different things to be told.
+    check_true("an imminent unlock is stated in minutes",
+               "unlocks in 90m" in rep(1.5).display())
+    check_true("and is distinguishable from a longer one",
+               rep(1.5).display() != rep(2.5).display())
+    check_true("an expired lock says so plainly",
+               "already expired" in rep(-2).display())
+
+    market = TokenMarket(ca="x", chain="solana", name="Tok", symbol="TOK",
+                         liquidity_usd=45000, fdv=120000, market_cap=120000,
+                         volume_24h=180000, volume_1h=70000, volume_5m=6000,
+                         change_5m=7, change_1h=88, buys_5m=90, sells_5m=35,
+                         age_hours=0.9, age_known=True, dex="raydium")
+
+    def flags(hours, kind="timed"):
+        return {f.code for f in risk.assess(market, rep(hours, kind))}
+
+    check("burned LP is not flagged", "LP_UNLOCKING" in flags(None, "burned"), False)
+    check("a 90 day lock is not flagged", "LP_UNLOCKING" in flags(2160), False)
+    check_true("unlocking tonight is flagged", "LP_UNLOCKING" in flags(18))
+    check_true("unlocking within the hour is flagged", "LP_UNLOCKING" in flags(1.5))
+    check_true("an expired lock is flagged", "LP_EXPIRED" in flags(-3))
+
+    # Sooner must cost more than later.
+    soon = risk.total_penalty(risk.assess(market, rep(1.5)))
+    later = risk.total_penalty(risk.assess(market, rep(18)))
+    check_true("an imminent unlock costs more than a distant one", soon < later)
+
+    # An expired lock can also mean stale locker data or LP burned afterwards,
+    # so it is penalised heavily rather than vetoed.
+    check("expired lock does not hard reject", rep(-3).hard_rejects, [])
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1075,6 +1129,7 @@ def main():
     test_channel_calls()
     test_lp_zero_corroboration()
     test_rug_score_and_dev_sold()
+    test_lp_lock_expiry()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

@@ -213,6 +213,9 @@ SAFETY = {
     # A low score on a token with no holder base means the checks had nothing
     # to examine, not that the token is safe.
     "rug_score_min_holders": 300,
+    # A lock expiring within this window is not protection. Flagged rather
+    # than rejected — plenty of real projects run short rolling locks.
+    "lp_min_lock_hours":    24.0,
     "reject_on_honeypot":   True,
     "reject_on_mint_auth":  True,
     "reject_on_freeze":     True,

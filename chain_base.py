@@ -96,6 +96,8 @@ class SafetyReport:
     insider_pct: Optional[float] = None      # supply bundled at launch
     holder_count: Optional[int] = None
     lp_locked_pct: Optional[float] = None
+    lp_unlock_hours: Optional[float] = None   # None = burned or no expiry
+    lp_lock_kind: Optional[str] = None        # burned | locked | timed
     has_graduated_pool: Optional[bool] = None
     mint_authority: Optional[bool] = None
     freeze_authority: Optional[bool] = None
@@ -153,7 +155,28 @@ class SafetyReport:
         elif "top_holder_pct" in self.unavailable:
             bits.append("Top holder n/a")
         if self.lp_locked_pct is not None:
-            bits.append(f"LP {self.lp_locked_pct:.0f}% locked")
+            # "100% locked" and "100% locked for another 90 minutes" are not
+            # the same token, and they scored identically until now.
+            if self.lp_unlock_hours is not None:
+                h = self.lp_unlock_hours
+                # Rounding hours hid the difference between 90 minutes and
+                # two and a half hours — both rendered as "2h", and those are
+                # very different situations to be told about.
+                if h <= 0:
+                    when = "already expired"
+                elif h < 3:
+                    when = f"{h * 60:.0f}m"
+                elif h < 48:
+                    when = f"{h:.1f}h".replace(".0h", "h")
+                else:
+                    when = f"{h / 24:.0f}d"
+                bits.append(
+                    f"LP {self.lp_locked_pct:.0f}% "
+                    + ("lock " + when if h <= 0 else f"unlocks in {when}"))
+            elif self.lp_lock_kind == "burned":
+                bits.append(f"LP {self.lp_locked_pct:.0f}% burned")
+            else:
+                bits.append(f"LP {self.lp_locked_pct:.0f}% locked")
         elif "lp_locked_pct" in self.unavailable:
             bits.append("LP n/a")
         if self.risk_raw is not None:

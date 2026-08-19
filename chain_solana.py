@@ -132,6 +132,41 @@ class SolanaAdapter(ChainAdapter):
                         rep.hard_rejects.append(
                             f"lp_unlocked_{rep.lp_locked_pct:.0f}pct")
 
+        # -- how long the lock actually lasts ---------------------
+        # A lock expiring this afternoon is not protection. RugCheck returns
+        # unlock timestamps in `lockers`, in a response already being fetched
+        # — Surgeon read the percentage and discarded the horizon.
+        lockers = data.get("lockers") or {}
+        if isinstance(lockers, dict) and lockers:
+            soonest = None
+            burned = False
+            for entry in lockers.values():
+                if not isinstance(entry, dict):
+                    continue
+                kind = str(entry.get("type") or "").lower()
+                if "burn" in kind:
+                    burned = True
+                    continue
+                unlock = safe_float(entry.get("unlockDate"))
+                if unlock > 0:
+                    hours = (unlock - time.time()) / 3600
+                    if soonest is None or hours < soonest:
+                        soonest = hours
+            if soonest is not None:
+                rep.lp_unlock_hours = round(soonest, 2)
+                rep.lp_lock_kind = "timed"
+                if soonest <= 0:
+                    # Heavily penalised in risk.py rather than rejected here.
+                    # An expired lock is a real danger, but it can also mean
+                    # stale locker data or LP burned after the lock lapsed —
+                    # and turning an ambiguous reading into a veto is the
+                    # mistake that cost us the Cancer Vaccine.
+                    rep.flags.append("lp_lock_expired")
+                elif soonest < config.SAFETY["lp_min_lock_hours"]:
+                    rep.flags.append(f"lp_unlocks_in_{soonest:.0f}h")
+            elif burned:
+                rep.lp_lock_kind = "burned"
+
         # A reading of exactly zero on a graduated pool is often "could not
         # read this pool type" rather than "the deployer holds the LP" —
         # RugCheck cannot see inside every venue pump.fun graduates into.
