@@ -24,7 +24,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 18
 
     env:
       # Sending needs this AND --live on the command. Either alone stays dry,
