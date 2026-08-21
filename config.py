@@ -35,6 +35,7 @@ CHAINS = {
         "kind":            "svm",
         "dexscreener_id":  "solana",
         "geckoterminal_id": "solana",
+        "discovery_pages":  6,
         "enabled":         True,
         "explorer":        "https://solscan.io/token/{ca}",
         "chart":           "https://dexscreener.com/solana/{ca}",
@@ -46,6 +47,7 @@ CHAINS = {
         "kind":            "evm",
         "dexscreener_id":  "robinhood",     # resolved
         "geckoterminal_id": "robinhood",    # resolved
+        "discovery_pages":  3,
         "goplus_chain_id": "4663",          # resolved
         "blockscout":      "https://robinhoodchain.blockscout.com",  # official explorer
         "enabled":         True,
@@ -59,6 +61,7 @@ CHAINS = {
         "kind":            "evm",
         "dexscreener_id":  "base",
         "geckoterminal_id": "base",
+        "discovery_pages":  2,
         "goplus_chain_id": "8453",
         "blockscout":      "https://base.blockscout.com",
         "enabled":         True,
@@ -72,6 +75,7 @@ CHAINS = {
         "kind":            "evm",
         "dexscreener_id":  "bsc",
         "geckoterminal_id": "bsc",
+        "discovery_pages":  2,
         "goplus_chain_id": "56",
         "blockscout":      None,
         "enabled":         True,
@@ -85,6 +89,7 @@ CHAINS = {
         "kind":            "evm",
         "dexscreener_id":  "monad",         # resolved via geckoterminal
         "geckoterminal_id": "monad",        # resolved
+        "discovery_pages":  2,
         "goplus_chain_id": "143",           # resolved
         "blockscout":      None,
         "enabled":         True,

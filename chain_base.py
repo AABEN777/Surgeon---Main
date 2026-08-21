@@ -674,9 +674,17 @@ class ChainAdapter(ABC):
         """
         New pools first (GeckoTerminal), then promoted tokens (DexScreener).
         Deduped, order preserved — freshest launches lead.
+
+        Depth is per chain because launch rates are not comparable. Two pages
+        is about forty pools; Solana produces far more than that in fifteen
+        minutes, so anything outside the newest forty at the moment we looked
+        was never seen at all. A graduation creates a new pool, which is how
+        a token at $2.7m FDV doing $2.75m daily volume went unnoticed.
         """
+        pages = self.cfg.get("discovery_pages", 2)
         out, seen = [], set()
-        for src in (geckoterminal_discover(self.cfg.get("geckoterminal_id")),
+        for src in (geckoterminal_discover(self.cfg.get("geckoterminal_id"),
+                                           pages=pages),
                     dexscreener_discover(self.chain_id)):
             for ca in src:
                 if ca not in seen:
@@ -686,7 +694,8 @@ class ChainAdapter(ABC):
 
     def discover_breakdown(self) -> dict:
         """Per-source counts — used by the verify workflow."""
-        gt = geckoterminal_discover(self.cfg.get("geckoterminal_id"))
+        gt = geckoterminal_discover(self.cfg.get("geckoterminal_id"),
+                                    pages=self.cfg.get("discovery_pages", 2))
         ds = dexscreener_discover(self.chain_id)
         return {"geckoterminal": len(gt), "dexscreener": len(ds),
                 "merged": len(set(gt) | set(ds))}

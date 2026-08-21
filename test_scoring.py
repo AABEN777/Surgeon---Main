@@ -1139,6 +1139,35 @@ def test_per_tier_alert_floors():
                config.CONVICTION["min_to_alert"] < 60)
 
 
+def test_discovery_depth():
+    """
+    Two pages is about forty new pools. Solana produces far more than that in
+    fifteen minutes, so anything outside the newest forty at the moment we
+    looked was never seen — and a graduation creates a new pool, which is how
+    a token at $2.7m FDV doing $2.75m daily volume went unnoticed.
+
+    Depth is per chain because launch rates are not remotely comparable.
+    """
+    print("\ndiscovery depth")
+    depth = {k: v.get("discovery_pages", 2)
+             for k, v in config.CHAINS.items() if v.get("enabled")}
+
+    check_true("solana looks deepest", depth["solana"] == max(depth.values()))
+    check_true("solana goes deeper than the quiet chains",
+               depth["solana"] > depth["base"] and depth["solana"] > depth["monad"])
+    check_true("robinhood sits between", depth["base"] <= depth["robinhood"]
+               <= depth["solana"])
+
+    # Depth costs throttled requests, so it has to stay bounded.
+    extra = sum(depth.values()) - 2 * len(depth)
+    check_true("the extra cost is single digits per scan", extra <= 9)
+
+    # And the adapter must actually use it rather than the default.
+    import inspect, chains
+    src = inspect.getsource(chains.get_adapter("solana").discover)
+    check_true("adapter reads the per-chain depth", "discovery_pages" in src)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1224,6 +1253,7 @@ def main():
     test_lp_lock_expiry()
     test_alert_standing()
     test_per_tier_alert_floors()
+    test_discovery_depth()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

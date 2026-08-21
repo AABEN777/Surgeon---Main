@@ -143,10 +143,12 @@ API at $200/month plus account age and location analysis.
 
 ## 7. Buildable now, not yet built
 
-**LP lock expiry.** Surgeon reads `lp_locked_pct: 100` as safe without
-knowing whether the lock expires in two hours. RugCheck returns `lockers`
-with unlock timestamps in a response already fetched every scan — this is
-parsing a field currently discarded.
+**LP lock expiry — BUILT.** Unlock timestamps parsed from RugCheck's
+`lockers`, surfaced in the alert ("LP 100% unlocks in 90m") and scored:
+-6 inside a day, -12 inside twelve hours, -20 inside two, -25 once expired.
+Burned LP and locks without an expiry are unaffected. Penalised rather than
+rejected, since an expired lock can also mean stale locker data or liquidity
+burned afterwards.
 
 **Daily briefing.** One message: win rate, best and worst chain, conviction
 band performance, current meta, watchlist conversion. Replaces running SQL by
@@ -171,7 +173,28 @@ directly from an RPC.
 
 ---
 
-## 9. Going live
+## 9. Paid data — evaluated, deferred
+
+**Solana Tracker Data API.** 70+ endpoints including trending by timeframe,
+recently graduated pump tokens, top-100 holders, and a 1-10 risk score
+covering snipers, bundlers and insider wallets. v1 used it on the VPS.
+
+Well matched to the discovery gap — "recently graduated pump tokens" is
+precisely the Cancer Vaccine, a pump.fun token that had moved to Meteora.
+
+Not taken because the free tier is 2,500 requests total, which is a trial
+rather than a tier: 96 scans a day exhausts it in under a fortnight. Paid
+starts around 50 euro a month.
+
+Deferred in favour of deepening GeckoTerminal discovery first, which is free
+and addresses the same gap. Revisit if that does not close it — then the
+purchase is justified rather than hopeful.
+
+**fomo and J7 Tracker** — no public API. Both are consumer products whose
+trackers depend on an authenticated X session, which scheduled jobs cannot
+hold. Use them by hand and paste contracts to the analyzer instead.
+
+## 10. Going live
 
 Alerting is deliberately fail-closed. Sending requires **both** `--live` on
 the command and `SURGEON_LIVE=true` in the environment; either alone stays

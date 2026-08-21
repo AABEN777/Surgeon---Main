@@ -73,3 +73,9 @@ test_adapters.py          smoke test
 See `ROADMAP.md`. The position watcher is built, so outcomes now accumulate.
 Next is derived smart money: promote wallets that were early in Surgeon's
 own winners, rather than trusting a hand-researched list.
+
+## Judging the changes
+
+`CHANGES.md` records every adjustment, what it was meant to fix, and what
+evidence would show it worked or should be removed — written before the
+outcomes arrived, so the test cannot be moved afterwards.
