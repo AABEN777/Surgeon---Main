@@ -390,8 +390,12 @@ def test_context_inputs():
                     volume_1h=180000, change_1h=85, change_5m=12,
                     buys_5m=210, sells_5m=64, age_hours=0.9, age_known=True,
                     dex="raydium")
+    # A holder count is what makes a low risk score meaningful — without one
+    # the score reflects "nothing detected yet", and this fixture is meant to
+    # be an established token rather than an unexamined one.
     s = SafetyReport(ca="c", chain="solana", sources=["rugcheck"],
-                     top_holder_pct=6.2, lp_locked_pct=100.0, risk_raw=1.0)
+                     top_holder_pct=6.2, lp_locked_pct=100.0, risk_raw=1.0,
+                     holder_count=820)
 
     bare = scoring.conviction_score(m, s, 0, 0, "NEUTRAL", session="NORMAL")
     social = scoring.conviction_score(m, s, 3, 0, "NEUTRAL", session="NORMAL")
@@ -407,7 +411,7 @@ def test_context_inputs():
                       buys_5m=34, sells_5m=21, age_hours=0.6, age_known=True,
                       dex="uniswap")
     ms = SafetyReport(ca="d", chain="base", sources=["goplus"], honeypot=False,
-                      unavailable=["top_holder_pct"])
+                      holder_count=640, unavailable=["top_holder_pct"])
     bull = scoring.conviction_score(mid, ms, 0, 0, "BULLISH", session="NORMAL")
     pause = scoring.conviction_score(mid, ms, 0, 0, "PAUSE", session="NORMAL")
     # Tracking and alerting are separate floors: this compares the decision
@@ -966,6 +970,29 @@ def test_rug_score_and_dev_sold():
 
     check_true("low score on an unexamined token is not clean",
                "unproven" in display(1, 40))
+
+    # Every rug that reached King came from the unflagged group — nothing
+    # detected, so nothing to warn about. Silence used to cost nothing.
+    market = TokenMarket(ca="x", chain="solana", name="T", symbol="T",
+                         liquidity_usd=30000, fdv=400000, market_cap=400000,
+                         volume_24h=300000, volume_1h=90000, volume_5m=6000,
+                         change_5m=4, change_1h=22, buys_5m=40, sells_5m=25,
+                         age_hours=8.0, age_known=True, dex="raydium")
+
+    def score_with(holders):
+        return scoring.conviction_score(
+            market,
+            SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                         top_holder_pct=4.0, insider_pct=2.0,
+                         holder_count=holders, lp_locked_pct=100.0,
+                         creator_holds_pct=0.1, risk_raw=1),
+            0, 0, "NEUTRAL", session="NORMAL")
+
+    examined, unexamined = score_with(1200), score_with(25)
+    check_true("an unexamined token scores lower than a checked one",
+               unexamined.score < examined.score)
+    check_true("and says why",
+               any(l == "unproven" for l, _ in unexamined.components))
     check_true("low score with a real holder base is clean",
                "clean" in display(1, 17900))
     check_true("high score still reads severe", "severe" in display(11400, 665))
@@ -1045,6 +1072,71 @@ def test_lp_lock_expiry():
     # An expired lock can also mean stale locker data or LP burned afterwards,
     # so it is penalised heavily rather than vetoed.
     check("expired lock does not hard reject", rep(-3).hard_rejects, [])
+
+
+def test_alert_standing():
+    """
+    Every rug that reached King came from the group with nothing flagged —
+    not because those tokens were clean, but because nothing could be
+    checked. Flagged tokens rugged zero times and peaked at 115 on average.
+    That distinction now leads the alert instead of being buried.
+    """
+    import alerts, chains
+    print("\nalert safety standing")
+
+    market = TokenMarket(ca="7xK" + "q" * 41, chain="solana",
+                         name="Steady Runner", symbol="STDY",
+                         price_usd=0.00042, liquidity_usd=60000, fdv=520000,
+                         market_cap=520000, volume_24h=900000,
+                         volume_1h=180000, volume_5m=14000, change_5m=6,
+                         change_1h=64, change_24h=210, buys_5m=120,
+                         sells_5m=70, age_hours=1.4, age_known=True,
+                         dex="raydium")
+
+    def standing(safety):
+        ev = scoring.evaluate(market, safety, "solana")
+        return alerts.format_signal(ev, chains.get_adapter("solana")).splitlines()[3]
+
+    clean = SafetyReport(ca=market.ca, chain="solana", sources=["rugcheck"],
+                         top_holder_pct=2.4, insider_pct=2.0,
+                         holder_count=3100, lp_locked_pct=100.0,
+                         lp_lock_kind="burned", creator_holds_pct=0.05,
+                         risk_raw=1)
+    flagged = SafetyReport(ca=market.ca, chain="solana", sources=["rugcheck"],
+                           top_holder_pct=11.0, insider_pct=18.0,
+                           holder_count=900, lp_locked_pct=100.0,
+                           lp_unlock_hours=6, lp_lock_kind="timed",
+                           creator_holds_pct=0.1, risk_raw=120)
+    unproven = SafetyReport(ca=market.ca, chain="solana", sources=["rugcheck"],
+                            top_holder_pct=3.0, insider_pct=0.0,
+                            holder_count=22, lp_locked_pct=100.0,
+                            creator_holds_pct=0.0, risk_raw=1)
+
+    check_true("a checked token reads clean", "CLEAN" in standing(clean))
+    check_true("a flagged token names its worst flag",
+               "TOP_HOLDER" in standing(flagged))
+    # Unproven must win over the flag count: it is the state that produced
+    # every rug that got through, so it cannot be hidden behind "1 flag".
+    check_true("unproven is stated even alongside flags",
+               "UNPROVEN" in standing(unproven))
+    check_true("unverified is stated loudest",
+               "UNVERIFIED" in standing(SafetyReport(ca=market.ca, chain="solana")))
+
+
+def test_per_tier_alert_floors():
+    """
+    A single alert floor muted the best-performing tier. Boosted produced 82
+    signals and sent zero — its gates are the loosest, so its tokens score
+    lower by construction, while winning 32.1% against first_moon's 17.9%.
+    """
+    print("\nper-tier alert floors")
+    floors = config.CONVICTION["min_to_alert_by_tier"]
+    check_true("boosted has the lowest bar",
+               floors["boosted"] < floors["second_moon"] <= floors["first_moon"])
+    check_true("boosted's bar sits under its average score of 43",
+               floors["boosted"] < 43)
+    check_true("the default is below the old single floor of 60",
+               config.CONVICTION["min_to_alert"] < 60)
 
 
 def main():
@@ -1130,6 +1222,8 @@ def main():
     test_lp_zero_corroboration()
     test_rug_score_and_dev_sold()
     test_lp_lock_expiry()
+    test_alert_standing()
+    test_per_tier_alert_floors()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

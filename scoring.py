@@ -304,8 +304,14 @@ def conviction_score(m: TokenMarket,
     # safety quality
     if not safety.verified:
         c.add("UNVERIFIED", C["unverified"])
-    elif safety.partial:
-        c.add("safety_partial", C["partial_safety"])
+    else:
+        if safety.partial:
+            c.add("safety_partial", C["partial_safety"])
+        # A source answered but had nothing to examine — no holder base, no
+        # history. That is not the same as being checked and passing.
+        if (safety.risk_raw is not None and safety.risk_raw <= 50
+                and not safety.rug_score_meaningful):
+            c.add("unproven", C["unproven_safety"])
 
     # untrustworthy market data should never look like momentum
     issues = m.sanity_issues
@@ -357,13 +363,17 @@ class Evaluation:
         """Passed every gate and cleared the bar for interrupting."""
         if self.rejected_by is not None:
             return False
+        # Each tier is judged against its own distribution. A single floor
+        # muted boosted entirely while passing weaker first_moon signals.
         if self.tier.tier == "social_call":
             # Consensus is the signal, not the score. Safety, scam checks and
             # the tier gate have already run — one channel posting into the
             # void is all this needs to exclude.
             return (self.conviction.social_channels
                     >= config.VELOCITY_MIN_CHANNELS)
-        return self.conviction.alertable
+        floor = config.CONVICTION["min_to_alert_by_tier"].get(
+            self.tier.tier, config.CONVICTION["min_to_alert"])
+        return self.conviction.score >= floor
 
     def summary(self) -> str:
         if self.rejected_by:

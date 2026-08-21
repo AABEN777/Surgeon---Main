@@ -117,10 +117,34 @@ def format_signal(ev, adapter) -> str:
     head = TIER_HEADER.get(ev.tier.tier, "📡 SIGNAL")
     icon = BAND_ICON.get(c.band, "")
 
+    # Safety standing, stated up front. Every rug that reached King came from
+    # the group with nothing flagged — not because it was clean, but because
+    # nothing could be checked. That distinction belongs at the top, not
+    # buried under the price data.
+    unproven = any(l == "unproven" for l, _ in c.components)
+    danger = sum(1 for f in c.risk_flags if f.severity == "danger")
+
+    if not s.verified:
+        standing = "🔴 UNVERIFIED — no safety source answered"
+    elif unproven:
+        # Stated even when flags exist, because this is the state that
+        # produced every rug that got through: nothing detected, because
+        # there was nothing yet to detect.
+        extra = f" · 🚩 {len(c.risk_flags)}" if c.risk_flags else ""
+        standing = f"🟠 UNPROVEN — too new to verify{extra}"
+    elif c.risk_flags:
+        word = "flag" if len(c.risk_flags) == 1 else "flags"
+        standing = (f"🚩 {len(c.risk_flags)} {word}"
+                    + (f", {danger} severe" if danger else "")
+                    + f" — {esc(c.risk_flags[0].code)}")
+    else:
+        standing = "🟢 CLEAN — checked, nothing flagged"
+
     lines = [
         f"{head} · {esc(adapter.display)} {icon}",
         "",
         f"<b>{esc(m.name)}</b> ({esc(m.symbol)})",
+        f"{standing}",
         f"⚡ Conviction <b>{c.score}/100</b> · {c.band} · {c.momentum}",
         "",
         f"💧 Liq {money(m.liquidity_usd)}   📊 FDV {money(m.fdv)}",

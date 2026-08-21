@@ -287,6 +287,11 @@ CONVICTION = {
     "smart_money":{2: 20, 1: 12},                        # unique wallets
     "unverified": -25,
     "partial_safety": -8,
+    # Every rug that reached King came from the unflagged group — nothing
+    # detected, so nothing to warn about. Flagged tokens rugged zero times
+    # and peaked at 115 on average. Silence is not safety, and until now it
+    # cost nothing.
+    "unproven_safety": -12,
     # A bleeding tape is not a small deduction. The same setup that is worth
     # taking with SOL up 8% is usually worth skipping with SOL down 12%.
     "macro":      {"BULLISH": 6, "NEUTRAL": 0, "CAUTION": -12, "PAUSE": -25},
@@ -295,7 +300,21 @@ CONVICTION = {
     # eleven signals a scan is several hundred a day and the channel gets
     # muted by evening.
     "min_to_track": 30,     # recorded, watched, feeds the outcome data
-    "min_to_alert": 60,     # actually reaches Telegram
+    "min_to_alert": 48,     # default bar for reaching Telegram
+
+    # One floor across every tier silently muted the best-performing one.
+    # Boosted produced 82 signals and sent zero: its gates are the loosest,
+    # so its tokens score lower by construction — average 43, best 67 —
+    # while winning 32.1% against first_moon's 17.9%.
+    #
+    # The score measures how much a token resembles a fresh launch, not how
+    # likely it is to run. Boosted tokens score badly because they are older
+    # and calmer, which is exactly what makes them win.
+    "min_to_alert_by_tier": {
+        "boosted":     38,
+        "first_moon":  52,
+        "second_moon": 48,
+    },
     # Channel calls are not gated on this score at all. Conviction is
     # calibrated for fresh launches — it docks a 28h-old token for being old
     # and gives it no age bonus, which is right when the claim is "this is
