@@ -304,14 +304,8 @@ def conviction_score(m: TokenMarket,
     # safety quality
     if not safety.verified:
         c.add("UNVERIFIED", C["unverified"])
-    else:
-        if safety.partial:
-            c.add("safety_partial", C["partial_safety"])
-        # A source answered but had nothing to examine — no holder base, no
-        # history. That is not the same as being checked and passing.
-        if (safety.risk_raw is not None and safety.risk_raw <= 50
-                and not safety.rug_score_meaningful):
-            c.add("unproven", C["unproven_safety"])
+    elif safety.partial:
+        c.add("safety_partial", C["partial_safety"])
 
     # untrustworthy market data should never look like momentum
     issues = m.sanity_issues

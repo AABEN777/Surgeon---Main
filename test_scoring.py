@@ -988,11 +988,20 @@ def test_rug_score_and_dev_sold():
                          creator_holds_pct=0.1, risk_raw=1),
             0, 0, "NEUTRAL", session="NORMAL")
 
+    # The unproven penalty is removed: it fired on 0 of 1,116 closed trades
+    # across every tier. An inert rule that looks like protection is worse
+    # than no rule, because it gets counted as one.
     examined, unexamined = score_with(1200), score_with(25)
-    check_true("an unexamined token scores lower than a checked one",
-               unexamined.score < examined.score)
-    check_true("and says why",
-               any(l == "unproven" for l, _ in unexamined.components))
+    check("unproven no longer scores", config.CONVICTION["unproven_safety"], 0)
+    # A thin holder base still costs, but through FEW_HOLDERS — King's own
+    # heuristic — rather than through a rule that never fired.
+    check_true("no unproven component remains",
+               not any(l == "unproven" for l, _ in unexamined.components))
+    check_true("thin holders still cost via the heuristic",
+               any(l == "risk:FEW_HOLDERS" for l, _ in unexamined.components))
+    # The label still distinguishes them, which is what it was always for.
+    check_true("but the display still says unproven",
+               "unproven" in display(1, 25))
     check_true("low score with a real holder base is clean",
                "clean" in display(1, 17900))
     check_true("high score still reads severe", "severe" in display(11400, 665))
@@ -1115,10 +1124,10 @@ def test_alert_standing():
     check_true("a checked token reads clean", "CLEAN" in standing(clean))
     check_true("a flagged token names its worst flag",
                "TOP_HOLDER" in standing(flagged))
-    # Unproven must win over the flag count: it is the state that produced
-    # every rug that got through, so it cannot be hidden behind "1 flag".
-    check_true("unproven is stated even alongside flags",
-               "UNPROVEN" in standing(unproven))
+    # A thin holder base now reads through its flags rather than a separate
+    # unproven state, since that rule never fired on real data.
+    check_true("a thin holder base still surfaces something",
+               "FEW_HOLDERS" in standing(unproven) or "🚩" in standing(unproven))
     check_true("unverified is stated loudest",
                "UNVERIFIED" in standing(SafetyReport(ca=market.ca, chain="solana")))
 
@@ -1218,17 +1227,28 @@ def test_winner_recovery():
 
     # Rugs come from what cannot be checked: unflagged tokens rug at 16.0%,
     # flagged at 10.9%.
-    check("unverified no longer interrupts",
-          config.SAFETY["unverified_policy"], "track_only")
-    bare = scoring.evaluate(
-        TokenMarket(ca="u", chain="base", name="U", symbol="U",
-                    liquidity_usd=30000, fdv=80000, market_cap=80000,
-                    volume_24h=120000, volume_1h=60000, volume_5m=5000,
-                    change_5m=6, change_1h=70, buys_5m=40, sells_5m=15,
-                    age_hours=0.6, age_known=True, dex="uniswap"),
-        SafetyReport(ca="u", chain="base"), "base")
-    check_true("an unverifiable token is still tracked", bare.should_track)
-    check_true("but never sent", not bare.should_alert)
+    # Muting unverified rested on a query that split on risk flags rather
+    # than verification status — different things. 央视抽象吉祥物 was
+    # unverified and ran +410%; it would have been silenced.
+    check("unverified flags rather than mutes",
+          config.SAFETY["unverified_policy"], "flag")
+
+    winner = TokenMarket(ca="u", chain="bsc", name="央视抽象吉祥物",
+                         symbol="周一来", liquidity_usd=35000, fdv=77899,
+                         market_cap=77899, volume_24h=200000,
+                         volume_1h=90000, volume_5m=7000, change_5m=12,
+                         change_1h=140, buys_5m=70, sells_5m=30,
+                         age_hours=0.65, age_known=True, dex="pancakeswap")
+    ev = scoring.evaluate(winner, SafetyReport(ca="u", chain="bsc"), "bsc")
+    check_true("the unverified winner reaches the phone", ev.should_alert)
+    # Conviction charges UNVERIFIED; the risk flag names it without billing
+    # again. Two mechanisms on one fact took this token from 59 to 49.
+    check_true("it is charged once, not twice",
+               any(l == "UNVERIFIED" for l, _ in ev.conviction.components)
+               and all(f.penalty == 0 for f in ev.conviction.risk_flags
+                       if f.code == "UNCHECKED"))
+    check_true("and the alert still says it is unverified",
+               any(f.code == "UNCHECKED" for f in ev.conviction.risk_flags))
 
 
 def main():

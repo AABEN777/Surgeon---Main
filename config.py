@@ -240,11 +240,12 @@ SAFETY = {
     # A token no safety source could answer for is UNVERIFIED, not PASS.
     # "flag"  = still alert, label it loudly, heavy conviction penalty
     # "block" = never alert
-    # Was "flag". Unflagged tokens rug at 16.0% against 10.9% for flagged
-    # ones — the rugs come from tokens where nothing could be seen, not from
-    # tokens where something was. A token no safety source could answer for
-    # is still tracked and graded, but no longer interrupts.
-    "unverified_policy":    "track_only",
+    # Back to "flag". The muting was justified with a query that split on
+    # risk flags, not on verification status — different things, and I used
+    # data about one to change the other. 央视抽象吉祥物 carried UNVERIFIED-25
+    # and ran +410%; muting would have silenced it. The penalty ranks it, the
+    # alert says so plainly, and King decides.
+    "unverified_policy":    "flag",
 }
 
 # ── SCAM HEURISTICS ───────────────────────────────────────────────
@@ -306,17 +307,16 @@ CONVICTION = {
     "liquidity":  [(20_000, 10), (15_000, 5)],
     "social":     {3: 20, 2: 12, 1: 5},                  # unique channels
     "smart_money":{2: 20, 1: 12},                        # unique wallets
-    # Was -25, which combined with muting punished the same fact twice and
-    # pushed these below the tracking floor — discarding the outcome data on
-    # the group that produces most of the rugs. Muting decides whether it
-    # interrupts; the penalty only ranks it.
-    "unverified": -10,
+    # -25 was double-counting only while these were also being muted. With
+    # muting gone the penalty does the whole job again, but at -18 rather
+    # than -25 so an unverifiable token can still clear the tracking floor
+    # and keep feeding the outcome data.
+    "unverified": -18,
     "partial_safety": -8,
-    # Every rug that reached King came from the unflagged group — nothing
-    # detected, so nothing to warn about. Flagged tokens rugged zero times
-    # and peaked at 115 on average. Silence is not safety, and until now it
-    # cost nothing.
-    "unproven_safety": -12,
+    # Removed. Fired on 0 of 1,116 closed trades across every tier — either
+    # holder_count is not populating or the 300 line is cleared by everyone.
+    # An inert rule that looks like protection is worse than no rule.
+    "unproven_safety": 0,
     # A bleeding tape is not a small deduction. The same setup that is worth
     # taking with SOL up 8% is usually worth skipping with SOL down 12%.
     "macro":      {"BULLISH": 6, "NEUTRAL": 0, "CAUTION": -12, "PAUSE": -25},

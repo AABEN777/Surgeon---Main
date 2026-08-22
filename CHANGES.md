@@ -37,6 +37,51 @@ which is a worse deal. Volume was tightened through safety instead.
 Net effect on the fifteen biggest winners: 8 would have reached the phone
 before, 13 now.
 
+## Second pass — reviewing my own reasoning
+
+Reread every change against the data. Two did not survive.
+
+**Reversed — muting unverified.** Justified with "unflagged tokens rug at
+16.0% against 10.9%", but that query split on *risk flags*, not verification
+status. Different things, and I used data about one to change the other.
+央视抽象吉祥物 was unverified and ran +410%; muting would have silenced it.
+Back to flagging, penalty -18.
+
+**Removed — the unproven rule.** Fired on 0 of 1,116 closed trades across
+every tier. An inert rule that looks like protection is worse than none,
+because it gets counted as one.
+
+**Fixed — a double charge.** UNVERIFIED cost -18 in conviction and the
+UNCHECKED risk flag cost another -10 for the same fact. That took the +410%
+winner from 59 to 49 and silenced it. The flag now names the condition
+without billing for it.
+
+### Two reverts I proposed and then withdrew
+
+I first argued for restoring boosted's 60 floor and reducing the top-holder
+grace, on the grounds that boosted closes at -45 and flags correlate with
+risk. Both were wrong, for the same reason:
+
+**`avg_final` measures our exit rules, not signal quality.** King trades
+manually and does not hold to our trailing stop — which gives back 130 points
+on average. Condemning boosted for its average close was condemning it for
+how our own exit logic handled it.
+
+On whether a token ever gave King a chance, boosted goes green **41.8%** of
+the time against first_moon's **38.4%**. Muting it would have removed the
+tier offering more opportunities than the one producing most alerts.
+
+And flagged tokens *win more and rug less* — 25.7% against 21.1%, rugging
+10.9% against 16.0%. Reducing that penalty moves with the data, not against
+it. (Confound worth naming: a flag mostly means we had enough data to form an
+opinion, so it may measure visibility rather than risk.)
+
+### What I got wrong twice, the same way
+
+Both errors came from reading an average without asking what produced it —
+the trailing-versus-volume-fade comparison, and the boosted verdict. In each
+case the mean concealed the mechanism. Worth watching for.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

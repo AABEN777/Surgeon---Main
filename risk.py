@@ -137,10 +137,16 @@ def _creator_heavy(safety) -> RiskFlag | None:
 
 
 def _unverified_safety(safety) -> RiskFlag | None:
-    """Being unable to check is itself a risk, and should read as one."""
+    """
+    Being unable to check is itself a risk — but conviction already charges
+    UNVERIFIED for exactly this, and two mechanisms billing the same fact
+    took the +410% winner from 59 to 49 and silenced it. The flag remains so
+    it appears in the alert and counts toward a stacked-danger block; the
+    points sit in conviction alone.
+    """
     if safety.verified:
         return None
-    return RiskFlag("UNCHECKED", "no safety source answered", -10, "danger")
+    return RiskFlag("UNCHECKED", "no safety source answered", 0, "danger")
 
 
 CHECKS = (
