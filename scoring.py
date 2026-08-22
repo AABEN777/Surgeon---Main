@@ -352,6 +352,7 @@ class Evaluation:
     reject_detail: str = ""
     from_watchlist: bool = False
     called_by: list = field(default_factory=list)
+    mute_reason: Optional[str] = None
 
     @property
     def should_track(self) -> bool:
@@ -361,7 +362,7 @@ class Evaluation:
     @property
     def should_alert(self) -> bool:
         """Passed every gate and cleared the bar for interrupting."""
-        if self.rejected_by is not None:
+        if self.rejected_by is not None or self.mute_reason:
             return False
         # Each tier is judged against its own distribution. A single floor
         # muted boosted entirely while passing weaker first_moon signals.
@@ -410,9 +411,15 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
         ev.reject_detail = ", ".join(safety.hard_rejects)
         return ev
 
-    if not safety.verified and config.SAFETY["unverified_policy"] == "block":
-        ev.rejected_by, ev.reject_detail = "unverified", "no safety source"
-        return ev
+    if not safety.verified:
+        policy = config.SAFETY["unverified_policy"]
+        if policy == "block":
+            ev.rejected_by, ev.reject_detail = "unverified", "no safety source"
+            return ev
+        if policy == "track_only":
+            # Recorded and watched so the outcome data keeps building, but it
+            # will not interrupt: rugs come from what cannot be checked.
+            ev.mute_reason = "unverified"
 
     if not tier.matched:
         ev.rejected_by = "tier"

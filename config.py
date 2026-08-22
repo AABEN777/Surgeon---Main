@@ -144,15 +144,19 @@ THRESHOLDS = {
     # Catch-all so a token cannot fall between tiers: first_moon stops at 2h
     # and second_moon needs $100k FDV, which left a 3h-old $60k token matching
     # nothing at all.
+    # Widened on a 28-trade sample showing 32.1%. On 110 trades it came in at
+    # 21.8% with the worst average close in the system (-45), below
+    # first_moon's 25.3%, and not one of the fifteen biggest winners was
+    # boosted. The original edge was small-sample luck; reverted.
     "boosted": {
-        "min_liquidity":   8_000,
-        "min_fdv":        15_000,
+        "min_liquidity":  10_000,
+        "min_fdv":        20_000,
         "max_fdv":     5_000_000,
         "min_age_hours":     0.17,
-        "max_age_hours":    36.0,
+        "max_age_hours":    24.0,
         "min_change_1h":     0.0,
-        "min_volume_1h":   3_500,
-        "min_turnover_1h":   0.04,
+        "min_volume_1h":   5_000,
+        "min_turnover_1h":   0.05,
         "min_change_5m":   -15.0,
     },
     # Tokens the channels are calling. A different question entirely: not
@@ -236,7 +240,11 @@ SAFETY = {
     # A token no safety source could answer for is UNVERIFIED, not PASS.
     # "flag"  = still alert, label it loudly, heavy conviction penalty
     # "block" = never alert
-    "unverified_policy":    "flag",
+    # Was "flag". Unflagged tokens rug at 16.0% against 10.9% for flagged
+    # ones — the rugs come from tokens where nothing could be seen, not from
+    # tokens where something was. A token no safety source could answer for
+    # is still tracked and graded, but no longer interrupts.
+    "unverified_policy":    "track_only",
 }
 
 # ── SCAM HEURISTICS ───────────────────────────────────────────────
@@ -249,6 +257,9 @@ SCAM = {
     # else changes — the checks are additive, not a rewrite.
     "enabled":            True,
     "top_holder_pct":        3.5,   # single wallet above this is a warning
+    # Inside this window the penalty is halved: a holder base takes hours to
+    # spread, and two of the biggest winners were charged full price for it.
+    "top_holder_grace_hours": 1.0,
     "min_volume_to_mcap":    0.80,  # 24h volume under this share of cap
     "bundled_pct":          15.0,   # supply held by launch-bundled wallets
     "min_holders":          50,
@@ -276,7 +287,12 @@ MARKET_HOURS = {
 MARKET_HOURS_ADJUST = {
     "PEAK":   {"min_change_1h_mult": 0.75, "min_volume_mult": 0.6, "conviction": +5},
     "NORMAL": {"min_change_1h_mult": 1.00, "min_volume_mult": 1.0, "conviction":  0},
-    "DEAD":   {"min_change_1h_mult": 2.00, "min_volume_mult": 2.0, "conviction": -10},
+    # Penalty removed. Five of the fifteen biggest winners took DEAD-10 —
+    # Bullballs (+4,332%), Caesar (+794%), Fatal Boner (+832%), Burpcoin,
+    # Onigiricoin. Ten points each, on tokens that launched overnight and ran
+    # anyway. The gates still tighten in dead hours; the score no longer
+    # taxes a token for the clock it launched on.
+    "DEAD":   {"min_change_1h_mult": 2.00, "min_volume_mult": 2.0, "conviction": 0},
 }
 
 # ── CONVICTION SCORING ────────────────────────────────────────────
@@ -290,7 +306,11 @@ CONVICTION = {
     "liquidity":  [(20_000, 10), (15_000, 5)],
     "social":     {3: 20, 2: 12, 1: 5},                  # unique channels
     "smart_money":{2: 20, 1: 12},                        # unique wallets
-    "unverified": -25,
+    # Was -25, which combined with muting punished the same fact twice and
+    # pushed these below the tracking floor — discarding the outcome data on
+    # the group that produces most of the rugs. Muting decides whether it
+    # interrupts; the penalty only ranks it.
+    "unverified": -10,
     "partial_safety": -8,
     # Every rug that reached King came from the unflagged group — nothing
     # detected, so nothing to warn about. Flagged tokens rugged zero times

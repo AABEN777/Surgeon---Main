@@ -1,5 +1,53 @@
 # Changes to judge
 
+## Verdicts from the first full dataset (1,123 closed trades)
+
+**Reverted — boosted widening.** 21.8% on 110 trades against first_moon's
+25.3%, worst average close in the system at -45, and not one of the fifteen
+biggest winners was boosted. The 32.1% that justified widening was 28 trades
+of luck. Back to 24h / $20k FDV.
+
+**Removed — DEAD session penalty.** Five of the fifteen biggest winners were
+taxed ten points for launching overnight: Bullballs (+4,332%), Caesar
+(+794%), Fatal Boner (+832%), Burpcoin, Onigiricoin. The gates still tighten
+in dead hours; the score no longer charges a token for its launch time.
+
+**Changed — top holder scaled by age.** Halved inside the first hour. Buying
+Power took -14 and ran +3,128%; Caesar took -14 and ran +794%. Concentration
+on a twenty-minute-old token is what an early runner looks like. Severe
+concentration stays severe at any age.
+
+**Changed — unverified muted rather than penalised twice.** Unflagged tokens
+rug at 16.0%, flagged at 10.9%. Rugs come from what cannot be checked, so
+unverifiable tokens no longer interrupt — but the penalty drops to -10 so
+they stay above the tracking floor and keep feeding the outcome data.
+
+**Kept — scam heuristics.** Flagged tokens win 25.7% against 21.1% and rug at
+10.9% against 16.0%.
+
+**Kept — meta detection.** Theme metas 32.6%, word metas 25.7% with an average
+peak of 86, against a 22.0% baseline on 967 trades. My copycat worry was
+wrong: word metas have the highest peaks in the system.
+
+**Not raised — score floors.** Conviction is flat from 30 to 69 and the
+fifteen biggest winners have a median score of 51. Raising the floor would
+cut winners and losers in equal measure — fewer alerts at the same win rate,
+which is a worse deal. Volume was tightened through safety instead.
+
+Net effect on the fifteen biggest winners: 8 would have reached the phone
+before, 13 now.
+
+## Still unresolved
+
+**Trailing stops are the largest leak.** 156 exits, average peak +122%,
+average close -8% — giving back 130 points. Volume fade gives back 21 and
+closes at +79. Not yet touched, because the two largest winners (+5,900% and
++4,332%) exited on MAX_HOLD after running the full eight hours, so trailing
+harder would cut off exactly the tokens that pay for everything else.
+
+---
+
+
 Every adjustment made in the last two days, what it was meant to fix, and
 what evidence would show it worked or should be removed.
 

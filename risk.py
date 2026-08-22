@@ -31,22 +31,37 @@ class RiskFlag:
 
 # ── individual checks ─────────────────────────────────────────────
 
-def _top_holder(safety) -> RiskFlag | None:
+def _top_holder(safety, market=None) -> RiskFlag | None:
     """
     A single wallet holding real size can exit into your bid.
 
-    Scaled rather than binary: 4% on a fresh launch is ordinary, 25% is a
-    countdown. Pools, lockers and burn addresses are already excluded
-    upstream, so this is float genuinely held by someone.
+    Scaled by age as well as size. On a token twenty minutes old,
+    concentration is what an early runner looks like — Buying Power took -14
+    here and ran +3,128%, Caesar took -14 and ran +794%. A holder base takes
+    hours to spread, so charging full price for that in the first hour
+    penalises the defining feature of the winners.
     """
     pct = safety.top_holder_pct
     if pct is None or pct <= config.SCAM["top_holder_pct"]:
         return None
+
     if pct >= 20:
-        return RiskFlag("TOP_HOLDER", f"{pct:.1f}% in one wallet", -22, "danger")
-    if pct >= 10:
-        return RiskFlag("TOP_HOLDER", f"{pct:.1f}% in one wallet", -14)
-    return RiskFlag("TOP_HOLDER", f"{pct:.1f}% in one wallet", -6)
+        points, severity = -22, "danger"
+    elif pct >= 10:
+        points, severity = -14, "warn"
+    else:
+        points, severity = -6, "warn"
+
+    age = getattr(market, "age_hours", None) if market else None
+    known = getattr(market, "age_known", False) if market else False
+    if known and age is not None and age < config.SCAM["top_holder_grace_hours"]:
+        # Halved, not waived: 40% in one wallet is a countdown at any age.
+        points = int(round(points / 2))
+        if severity == "warn":
+            return RiskFlag("TOP_HOLDER",
+                            f"{pct:.1f}% in one wallet, {age * 60:.0f}m old",
+                            points, severity)
+    return RiskFlag("TOP_HOLDER", f"{pct:.1f}% in one wallet", points, severity)
 
 
 def _thin_volume(market) -> RiskFlag | None:
@@ -129,7 +144,7 @@ def _unverified_safety(safety) -> RiskFlag | None:
 
 
 CHECKS = (
-    ("safety", _top_holder),
+    ("safety_market", _top_holder),
     ("market", _thin_volume),
     ("safety", _bundled),
     ("safety", _lock_expiring),
@@ -145,7 +160,12 @@ def assess(market, safety) -> list[RiskFlag]:
         return []
     flags: list[RiskFlag] = []
     for kind, check in CHECKS:
-        flag = check(market if kind == "market" else safety)
+        if kind == "market":
+            flag = check(market)
+        elif kind == "safety_market":
+            flag = check(safety, market)
+        else:
+            flag = check(safety)
         if flag:
             flags.append(flag)
     flags.sort(key=lambda f: f.penalty)

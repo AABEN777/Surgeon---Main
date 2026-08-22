@@ -1168,6 +1168,69 @@ def test_discovery_depth():
     check_true("adapter reads the per-chain depth", "discovery_pages" in src)
 
 
+def test_winner_recovery():
+    """
+    Rules judged against the fifteen biggest winners Surgeon actually found.
+
+    Five of them were taxed ten points for launching in dead hours, and two
+    were charged fourteen for holder concentration while twenty minutes old —
+    which is what an early runner looks like. Buying Power took -14 and ran
+    +3,128%; Caesar took -14 and ran +794%.
+
+    Under the old rules 8 of 15 cleared their tier floor. Under these, 13 do.
+    """
+    print("\nwinner recovery")
+
+    check("dead hours no longer taxed",
+          config.MARKET_HOURS_ADJUST["DEAD"]["conviction"], 0)
+    check_true("dead hours still tighten the gates",
+               config.MARKET_HOURS_ADJUST["DEAD"]["min_change_1h_mult"] > 1)
+
+    # Every one of the fifteen was under two hours old at signal, so the
+    # grace window has to cover that range to matter at all.
+    check_true("grace window covers the winners' ages",
+               config.SCAM["top_holder_grace_hours"] >= 1.0)
+
+    import risk
+    def penalty(pct, age):
+        market = TokenMarket(ca="x", chain="solana", name="T", symbol="T",
+                             liquidity_usd=40000, fdv=60000, market_cap=60000,
+                             volume_24h=90000, volume_1h=60000,
+                             age_hours=age, age_known=True, dex="raydium")
+        safety = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                              top_holder_pct=pct, insider_pct=2.0,
+                              holder_count=600, creator_holds_pct=0.1)
+        flags = [f for f in risk.assess(market, safety) if f.code == "TOP_HOLDER"]
+        return flags[0].penalty if flags else 0
+
+    check_true("young concentration costs less", penalty(10.9, 0.19) > penalty(10.9, 3.0))
+    check_true("but is not waived", penalty(10.9, 0.19) < 0)
+    # 24% in one wallet is a countdown at any age, so it stays severe.
+    check_true("severe concentration stays severe",
+               penalty(24.0, 0.19) <= -10)
+
+    # Boosted reverted: 21.8% on 110 trades against first_moon's 25.3%, and
+    # not one of the fifteen was boosted.
+    check("boosted ceiling reverted",
+          config.THRESHOLDS["boosted"]["max_age_hours"], 24.0)
+    check("boosted fdv floor reverted",
+          config.THRESHOLDS["boosted"]["min_fdv"], 20_000)
+
+    # Rugs come from what cannot be checked: unflagged tokens rug at 16.0%,
+    # flagged at 10.9%.
+    check("unverified no longer interrupts",
+          config.SAFETY["unverified_policy"], "track_only")
+    bare = scoring.evaluate(
+        TokenMarket(ca="u", chain="base", name="U", symbol="U",
+                    liquidity_usd=30000, fdv=80000, market_cap=80000,
+                    volume_24h=120000, volume_1h=60000, volume_5m=5000,
+                    change_5m=6, change_1h=70, buys_5m=40, sells_5m=15,
+                    age_hours=0.6, age_known=True, dex="uniswap"),
+        SafetyReport(ca="u", chain="base"), "base")
+    check_true("an unverifiable token is still tracked", bare.should_track)
+    check_true("but never sent", not bare.should_alert)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1254,6 +1317,7 @@ def main():
     test_alert_standing()
     test_per_tier_alert_floors()
     test_discovery_depth()
+    test_winner_recovery()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
