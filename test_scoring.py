@@ -1251,6 +1251,39 @@ def test_winner_recovery():
                any(f.code == "UNCHECKED" for f in ev.conviction.risk_flags))
 
 
+def test_solana_infrastructure_holders():
+    """
+    Most of a young token's float sits in the AMM by design. Counting the
+    pool as a holder makes a healthy launch read as heavily concentrated —
+    the same fault that made a Uniswap pair look like a 50% whale on EVM,
+    fixed there early and never mirrored on Solana.
+
+    RugCheck's insider tag catches wallets funded together before launch. It
+    does not catch the pool, the bonding curve or an exchange.
+    """
+    from chain_base import is_solana_infrastructure as infra
+    print("\nsolana infrastructure holders")
+
+    check_true("raydium authority excluded",
+               infra({"address": "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"}))
+    check_true("burn address excluded",
+               infra({"owner": "1nc1nerator11111111111111111111111111111111"}))
+    check_true("labelled pool excluded",
+               infra({"address": "9x", "owner_name": "Raydium Liquidity Pool V4"}))
+    check_true("bonding curve excluded",
+               infra({"address": "Fg", "owner_name": "Pump.fun Bonding Curve"}))
+    check_true("exchange wallet excluded",
+               infra({"address": "8k", "owner_name": "Binance Hot Wallet"}))
+
+    # An ordinary wallet must survive, labelled or not — over-excluding hides
+    # the concentration this check exists to find.
+    check_true("plain wallet counted", not infra({"address": "3nMFwZ", "pct": 4.2}))
+    check_true("unlabelled wallet counted",
+               not infra({"address": "7yUt", "owner_name": "", "pct": 9.1}))
+    check_true("a wallet named after a person is counted",
+               not infra({"address": "2bQ", "owner_name": "whale.sol"}))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1338,6 +1371,7 @@ def main():
     test_per_tier_alert_floors()
     test_discovery_depth()
     test_winner_recovery()
+    test_solana_infrastructure_holders()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
