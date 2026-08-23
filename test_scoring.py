@@ -1384,6 +1384,19 @@ def test_derived_smart_money():
     check_true("a review grace period exists",
                config.SMART_MONEY_DERIVED["review_after_hours"] > 0)
 
+    # Winners were the all-time best and losers the most recent, so a wallet
+    # that stopped trading last week appeared in old winners, could not
+    # appear in recent losers, and scored as perfectly selective for having
+    # gone quiet. Both samples must span the same period.
+    import inspect
+    src = inspect.getsource(derive.main)
+    check_true("winners report the window they span", "window_start" in src)
+    check_true("the control group uses that window",
+               "since=window_start" in src)
+    sig = inspect.signature(derive.losers)
+    check_true("losers can be bounded by time", "since" in sig.parameters)
+    check_true("and by chain", "chain" in sig.parameters)
+
     store_mod._mem["smart_wallets"] = []
 
 

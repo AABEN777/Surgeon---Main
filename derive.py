@@ -43,22 +43,34 @@ log = logging.getLogger("surgeon.derive")
 WINNING_OUTCOMES = ("MOON", "BIG_WIN", "WIN")
 
 
-def winners(limit: int = 200, min_peak: float = 100.0) -> list[dict]:
+def winners(limit: int = 200, min_peak: float = 100.0,
+            since: float | None = None) -> tuple[list[dict], float]:
     """
-    Closed signals worth learning from.
+    Closed signals worth learning from, and the window they span.
 
-    WEAK_WIN is excluded deliberately: a token that closed +4% tells us
-    nothing about who was early to it, and there are enough of those to drown
-    the real ones.
+    Returns the earliest alerted_at in the sample so the control group can be
+    drawn from the same period. Taking the all-time best winners and the most
+    recent losers meant a wallet that stopped trading last week appeared in
+    old winners, could not appear in recent losers, and scored as perfectly
+    selective for having gone quiet.
+
+    WEAK_WIN is excluded deliberately: a token closing +4% says nothing about
+    who was early to it, and there are enough to drown the real ones.
     """
-    rows = store.select("signals", {
+    params = {
         "select": "ca,chain,name,symbol,peak_pnl,outcome,alerted_at",
         "outcome": f"in.({','.join(WINNING_OUTCOMES)})",
         "order": "peak_pnl.desc",
-        "limit": str(limit * 2),
-    })
-    return [r for r in rows
-            if safe_float(r.get("peak_pnl")) >= min_peak][:limit]
+        "limit": str(limit * 3),
+    }
+    if since:
+        params["alerted_at"] = f"gte.{since}"
+    rows = store.select("signals", params)
+    picked = [r for r in rows
+              if safe_float(r.get("peak_pnl")) >= min_peak][:limit]
+    earliest = min((safe_float(r.get("alerted_at")) for r in picked),
+                   default=0.0)
+    return picked, earliest
 
 
 # ── holder lookups ────────────────────────────────────────────────
@@ -143,7 +155,7 @@ def measure(sample: list[dict]) -> dict[str, dict]:
 
 
 def losers(limit: int = 120, max_peak: float = 20.0,
-           chain: str | None = None) -> list[dict]:
+           chain: str | None = None, since: float | None = None) -> list[dict]:
     """
     Closed signals that went nowhere — the control group, per chain.
 
@@ -161,6 +173,10 @@ def losers(limit: int = 120, max_peak: float = 20.0,
     }
     if chain:
         params["chain"] = f"eq.{chain}"
+    if since:
+        # Same window as the winners, or a wallet is judged on a period it
+        # was not active in.
+        params["alerted_at"] = f"gte.{since}"
     rows = store.select("signals", params)
     return [r for r in rows
             if safe_float(r.get("peak_pnl")) <= max_peak][:limit]
@@ -283,7 +299,7 @@ def main() -> int:
     args = ap.parse_args()
 
     started = time.time()
-    sample = winners(args.limit, args.min_peak)
+    sample, window_start = winners(args.limit, args.min_peak)
     if not sample:
         log.info("no winners above +%.0f%% yet", args.min_peak)
         return 0
@@ -291,7 +307,8 @@ def main() -> int:
     by_chain: dict[str, int] = defaultdict(int)
     for r in sample:
         by_chain[r.get("chain")] += 1
-    log.info("examining %d winners: %s", len(sample),
+    span = (time.time() - window_start) / 3600 if window_start else 0
+    log.info("examining %d winners over the last %.0fh: %s", len(sample), span,
              ", ".join(f"{c} {n}" for c, n in sorted(by_chain.items(),
                                                      key=lambda x: -x[1])))
 
@@ -309,7 +326,7 @@ def main() -> int:
     loser_counts: dict[str, int] = {}
     tested: dict[str, int] = {}
     for chain_key, keys in by_chain.items():
-        sample_l = losers(args.losers, chain=chain_key)
+        sample_l = losers(args.losers, chain=chain_key, since=window_start)
         if not sample_l:
             log.warning("[%s] no losing tokens to compare against — "
                         "candidates here cannot be judged", chain_key)
@@ -329,6 +346,11 @@ def main() -> int:
     if picks:
         for p in picks:
             print(f"  + {p['chain']:<11} {p['address'][:20]}…  {p['label']}")
+        print()
+        print("  A wallet appearing in many winners on one chain may be a")
+        print("  deployer rather than a trader — the same team launching")
+        print("  several tokens puts one address in all of them. Worth")
+        print("  checking a couple on the explorer before trusting them.")
     else:
         need = config.SMART_MONEY_DERIVED["min_winners"]
         best = max((r["winners"] for r in measured.values()), default=0)
