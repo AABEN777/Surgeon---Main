@@ -1302,6 +1302,60 @@ def test_weak_momentum_penalised():
     check_true("fake is not rewarded either", w.get("FAKE", 0) <= 0)
 
 
+def test_derived_smart_money():
+    """
+    Find the wallets holding Surgeon's own winners early, promote the ones
+    that keep appearing, retire the ones that stop.
+
+    I had this blocked on the wrong constraint — assumed it needed Helius,
+    which is Solana-only, and Solana has too few quality winners. But 27 of
+    the 46 MOONs came from Robinhood, whose Blockscout serves holder data we
+    already fetch. The chain producing winners can say who held them.
+    """
+    import derive, store as store_mod
+    print("\nderived smart money")
+
+    def measured(**wallets):
+        out = {}
+        for key, tokens in wallets.items():
+            chain, wallet = key.split(":")
+            out[key] = {"chain": chain, "wallet": wallet,
+                        "winners": len(tokens), "tokens": tokens,
+                        "total_peak": 300.0 * len(tokens)}
+        return out
+
+    picks = derive.promote(measured(**{
+        "robinhood:0xrepeat": ["A", "B", "C", "D"],
+        "robinhood:0xlucky":  ["A"],
+        "robinhood:0xtwice":  ["B", "C"],
+        "solana:SolRepeat":   ["E", "F", "G"],
+    }), dry_run=True)
+    promoted = {p["address"] for p in picks}
+
+    # Distinct tokens is the thing that cannot happen by chance. One moonshot
+    # is a lottery ticket; two is coincidence on a chain with thousands of
+    # active wallets.
+    check_true("a wallet in four winners is promoted", "0xrepeat" in promoted)
+    check_true("three winners qualifies", "SolRepeat" in promoted)
+    check_true("two winners does not", "0xtwice" not in promoted)
+    check_true("one moonshot does not", "0xlucky" not in promoted)
+    check_true("the evidence is recorded on the wallet",
+               all("winners" in p["label"] for p in picks))
+
+    # WEAK_WIN is excluded from the sample: a token closing +4% says nothing
+    # about who was early, and there are enough to drown the real ones.
+    check_true("weak wins are not counted as winners",
+               "WEAK_WIN" not in derive.WINNING_OUTCOMES)
+    check_true("moons are", "MOON" in derive.WINNING_OUTCOMES)
+
+    # New wallets get a grace period so they are not retired for missing
+    # winners that closed before they were tracked.
+    check_true("a review grace period exists",
+               config.SMART_MONEY_DERIVED["review_after_hours"] > 0)
+
+    store_mod._mem["smart_wallets"] = []
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1391,6 +1445,7 @@ def main():
     test_winner_recovery()
     test_solana_infrastructure_holders()
     test_weak_momentum_penalised()
+    test_derived_smart_money()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

@@ -402,6 +402,19 @@ META = {
     "max_points":        12,     # tops up a signal, never carries it
 }
 
+# ── DERIVED SMART MONEY ───────────────────────────────────────────
+# Wallets found by looking at who held Surgeon's own winners early, rather
+# than trusting a hand-researched list or a third-party leaderboard.
+SMART_MONEY_DERIVED = {
+    # Distinct winning tokens a wallet must appear in. Two is coincidence on
+    # a chain with a few thousand active wallets; three is a pattern.
+    "min_winners":         3,
+    "max_promote":        15,
+    # A newly added wallet gets this long before being judged, so it is not
+    # retired for missing winners that closed before it was tracked.
+    "review_after_hours": 72,
+}
+
 # ── SMART MONEY WALLETS ───────────────────────────────────────────
 # chain -> [{address, label}]
 SMART_MONEY = {

@@ -37,7 +37,25 @@ Results land in `signals`, which unblocks items 2, 4 and 5.
 Still to wire: dev-wallet-sold needs the creator's holding recorded at
 signal time to compare against.
 
-## 2. Derived smart money — NEXT
+## 2. Derived smart money — BUILT
+
+`derive.py`, run daily by `derive.yml`. Examines who was holding Surgeon's
+own winners early, promotes wallets appearing across three or more distinct
+winners into `smart_wallets`, and retires tracked wallets that stop showing
+up (after a 72h grace period so new entries are not judged prematurely).
+
+Holder data comes from Blockscout on Robinhood and Base, and RugCheck on
+Solana — pools, programmes and exchange accounts excluded.
+
+I had this blocked on the wrong constraint for weeks: I assumed it needed
+Helius, which is Solana-only, and Solana has too few quality winners. But 27
+of the 46 MOONs came from Robinhood, whose Blockscout instance serves holder
+data we already fetch every scan.
+
+Only MOON, BIG_WIN and WIN count. WEAK_WIN is excluded — a token closing +4%
+says nothing about who was early to it.
+
+## 2b. Derived smart money (original note)
 
 The wallets currently tracked were hand-researched on a machine that no
 longer exists, and nothing has verified they are still any good. Third-party
