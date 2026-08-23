@@ -1408,10 +1408,13 @@ def test_derived_smart_money():
     check_true("the transfer walk is budgeted",
                config.SMART_MONEY_DERIVED["transfer_pages"] > 0)
     buyers_src = inspect.getsource(derive._evm_early_buyers)
-    check_true("it walks to the earliest transfers",
-               "reversed" in buyers_src)
-    check_true("contracts and burns are skipped",
-               "is_contract" in buyers_src and "BURN_ADDRESSES" in buyers_src)
+    # v2 paginates newest-first, so four pages of it is "slightly less
+    # recent buyers", not early ones. The v1 endpoint sorts ascending and
+    # answers in a single request.
+    check_true("transfers are requested oldest first",
+               '"sort": "asc"' in buyers_src)
+    check_true("one request per token", buyers_src.count("http_get") == 1)
+    check_true("burn addresses skipped", "BURN_ADDRESSES" in buyers_src)
     # Solana has no transfer endpoint, so it keeps the bias and says so.
     check_true("solana still uses holders", "_solana_holders" in holders_src)
 

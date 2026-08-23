@@ -77,51 +77,51 @@ def winners(limit: int = 200, min_peak: float = 100.0,
 
 def _evm_early_buyers(chain: str, ca: str, want: int = 40) -> list[str]:
     """
-    The first wallets to receive this token, from its transfer history.
+    The first wallets to receive this token.
 
-    Holder lists answer "who holds this now", which is the wrong question:
-    a token that mooned still has its holders, while one that died has been
-    abandoned. So the same wallet appears in the winner and has vanished from
-    the loser, and every candidate scores near-perfect selectivity on what is
-    really survivorship in a snapshot.
+    Uses Blockscout's Etherscan-compatible v1 endpoint with sort=asc, which
+    returns oldest transfers first in a single request. The v2 endpoint
+    paginates newest-first, so reaching the start of a token's history means
+    walking every page — four pages of a newest-first feed is not "early
+    buyers", it is "slightly less recent buyers", and that was the flaw in
+    the previous attempt regardless of the timeouts it caused.
 
-    Transfers do not move. Whoever bought early is in the record whether they
-    held or dumped.
+    Holder lists cannot answer this at all: a token that mooned still has its
+    holders, one that died has been abandoned, so the same wallet appears in
+    the winner and has vanished from the loser.
     """
     base = config.CHAINS[chain].get("blockscout")
     if not base:
         return []
 
     from chain_base import BURN_ADDRESSES
+    data = http_get(f"{base}/api", params={
+        "module": "account",
+        "action": "tokentx",
+        "contractaddress": ca,
+        "sort": "asc",
+        "page": 1,
+        "offset": max(want * 3, 100),
+    })
+
+    result = (data or {}).get("result")
+    if not isinstance(result, list):
+        return []
+
     seen, out = set(), []
-    url = f"{base}/api/v2/tokens/{ca}/transfers"
-    params: dict = {}
-
-    for _ in range(config.SMART_MONEY_DERIVED["transfer_pages"]):
-        data = http_get(url, params=params or None)
-        items = (data or {}).get("items") or []
-        if not items:
+    for tx in result:
+        to = str(tx.get("to") or "").lower()
+        if not to or to in BURN_ADDRESSES:
+            continue
+        if set(to[2:]) <= {"0"} or to.endswith("dead"):
+            continue
+        if to in seen:
+            continue
+        seen.add(to)
+        out.append(to)
+        if len(out) >= want:
             break
-
-        # Newest first, so the earliest buyers are on the last page reached.
-        for item in items:
-            to = ((item.get("to") or {}).get("hash") or "").lower()
-            is_contract = (item.get("to") or {}).get("is_contract")
-            if not to or is_contract or to in BURN_ADDRESSES:
-                continue
-            if set(to[2:]) <= {"0"} or to.endswith("dead"):
-                continue
-            if to not in seen:
-                seen.add(to)
-                out.append(to)
-
-        nxt = (data or {}).get("next_page_params")
-        if not nxt:
-            break
-        params = nxt
-
-    # Earliest first: the tail of a newest-first walk is the start of trading.
-    return list(reversed(out))[:want]
+    return out
 
 
 def _solana_holders(ca: str, top: int = 50) -> list[str]:
@@ -324,11 +324,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Derive smart money from winners")
     ap.add_argument("--dry-run", action="store_true",
                     help="report without promoting or retiring")
-    ap.add_argument("--limit", type=int, default=60,
+    ap.add_argument("--limit", type=int, default=40,
                     help="how many winners to examine")
     ap.add_argument("--min-peak", type=float, default=100.0,
                     help="minimum peak %% to count as a winner")
-    ap.add_argument("--losers", type=int, default=80,
+    ap.add_argument("--losers", type=int, default=40,
                     help="how many losing tokens to check candidates against")
     args = ap.parse_args()
 
