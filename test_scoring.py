@@ -1324,12 +1324,19 @@ def test_derived_smart_money():
                         "total_peak": 300.0 * len(tokens)}
         return out
 
-    picks = derive.promote(measured(**{
+    # Every candidate needs a control group on its own chain, so the test
+    # supplies one — an untested wallet is now rejected rather than assumed
+    # perfect, which is the whole point of the change below.
+    sample = measured(**{
         "robinhood:0xrepeat": ["A", "B", "C", "D"],
         "robinhood:0xlucky":  ["A"],
         "robinhood:0xtwice":  ["B", "C"],
         "solana:SolRepeat":   ["E", "F", "G"],
-    }), dry_run=True)
+    })
+    picks = derive.promote(
+        sample, dry_run=True,
+        loser_counts={"robinhood:0xrepeat": 4, "solana:SolRepeat": 3},
+        tested={k: 40 for k in sample})
     promoted = {p["address"] for p in picks}
 
     # Distinct tokens is the thing that cannot happen by chance. One moonshot
@@ -1350,10 +1357,21 @@ def test_derived_smart_money():
     filtered = derive.promote(heavy, dry_run=True,
                               loser_counts={"robinhood:0xsniper": 71,
                                             "robinhood:0xpicker": 11},
-                              n_losers=80)
+                              tested={"robinhood:0xsniper": 80,
+                                      "robinhood:0xpicker": 80})
     kept = {p["address"] for p in filtered}
     check_true("a selective wallet is promoted", "0xpicker" in kept)
     check_true("one that buys everything is not", "0xsniper" not in kept)
+
+    # The control group has to be on the candidate's own chain. A Robinhood
+    # wallet cannot appear in a Base token's holders, so checking it against
+    # Base losers returns zero and reports perfect selectivity having tested
+    # nothing — which is why the first run came back at 70-100% across the
+    # board.
+    untested = derive.promote(
+        measured(**{"base:0xnochain": [f"b{i}" for i in range(6)]}),
+        dry_run=True, loser_counts={}, tested={})
+    check("an untested wallet is not promoted", untested, [])
 
     # WEAK_WIN is excluded from the sample: a token closing +4% says nothing
     # about who was early, and there are enough to drown the real ones.

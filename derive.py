@@ -142,20 +142,26 @@ def measure(sample: list[dict]) -> dict[str, dict]:
     return dict(seen)
 
 
-def losers(limit: int = 120, max_peak: float = 20.0) -> list[dict]:
+def losers(limit: int = 120, max_peak: float = 20.0,
+           chain: str | None = None) -> list[dict]:
     """
-    Closed signals that went nowhere — the control group.
+    Closed signals that went nowhere — the control group, per chain.
 
-    Without these, a wallet that buys every launch looks identical to one
-    that picks well: both appear in plenty of winners. The difference only
-    shows in what else they bought.
+    The chain filter is not a refinement, it is the whole point. A Robinhood
+    wallet cannot appear in a Base token's holder list, so checking it
+    against Base losers returns zero by construction and reports a wallet as
+    perfectly selective when nothing was actually tested. Every candidate in
+    the first run came back at 70-100% precision for exactly that reason.
     """
-    rows = store.select("signals", {
+    params = {
         "select": "ca,chain,peak_pnl,outcome",
         "outcome": "in.(LOSS,WEAK_WIN)",
         "order": "alerted_at.desc",
-        "limit": str(limit * 2),
-    })
+        "limit": str(limit * 3),
+    }
+    if chain:
+        params["chain"] = f"eq.{chain}"
+    rows = store.select("signals", params)
     return [r for r in rows
             if safe_float(r.get("peak_pnl")) <= max_peak][:limit]
 
@@ -176,7 +182,7 @@ def count_appearances(sample: list[dict], wallets: set[str]) -> dict[str, int]:
 
 def promote(measured: dict[str, dict], dry_run: bool = False,
             loser_counts: dict[str, int] | None = None,
-            n_losers: int = 0) -> list[dict]:
+            tested: dict[str, int] | int | None = None) -> list[dict]:
     """
     Wallets appearing across enough unrelated winners become smart money.
 
@@ -199,7 +205,14 @@ def promote(measured: dict[str, dict], dry_run: bool = False,
         lost = loser_counts.get(key, 0)
         seen = rec["winners"] + lost
         precision = rec["winners"] / seen if seen else 0.0
-        if n_losers and precision < cfg["min_precision"]:
+
+        # Only judge a wallet that was actually compared against something on
+        # its own chain. Untested is not the same as perfect.
+        was_tested = (tested.get(key, 0) if isinstance(tested, dict)
+                      else (tested or 0))
+        if not was_tested:
+            continue
+        if precision < cfg["min_precision"]:
             continue
 
         picks.append({
@@ -285,17 +298,29 @@ def main() -> int:
     measured = measure(sample)
     log.info("%d distinct wallets held them", len(measured))
 
-    # The control group: what else did these wallets buy?
-    candidates = {k for k, v in measured.items()
-                  if v["winners"] >= config.SMART_MONEY_DERIVED["min_winners"]}
-    loser_sample = losers(args.losers) if candidates else []
-    loser_counts = {}
-    if loser_sample:
-        log.info("checking %d candidates against %d tokens that went nowhere",
-                 len(candidates), len(loser_sample))
-        loser_counts = count_appearances(loser_sample, candidates)
+    # The control group, matched by chain: what else did these wallets buy?
+    need = config.SMART_MONEY_DERIVED["min_winners"]
+    candidates = {k for k, v in measured.items() if v["winners"] >= need}
 
-    picks = promote(measured, args.dry_run, loser_counts, len(loser_sample))
+    by_chain: dict[str, set[str]] = defaultdict(set)
+    for key in candidates:
+        by_chain[key.split(":", 1)[0]].add(key)
+
+    loser_counts: dict[str, int] = {}
+    tested: dict[str, int] = {}
+    for chain_key, keys in by_chain.items():
+        sample_l = losers(args.losers, chain=chain_key)
+        if not sample_l:
+            log.warning("[%s] no losing tokens to compare against — "
+                        "candidates here cannot be judged", chain_key)
+            continue
+        log.info("[%s] checking %d candidates against %d tokens that went "
+                 "nowhere", chain_key, len(keys), len(sample_l))
+        loser_counts.update(count_appearances(sample_l, keys))
+        for k in keys:
+            tested[k] = len(sample_l)
+
+    picks = promote(measured, args.dry_run, loser_counts, tested)
     retired = review_existing(measured, args.dry_run)
 
     print("\n" + "=" * 62)
