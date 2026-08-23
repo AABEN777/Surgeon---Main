@@ -1284,6 +1284,24 @@ def test_solana_infrastructure_holders():
                not infra({"address": "2bQ", "owner_name": "whale.sol"}))
 
 
+def test_weak_momentum_penalised():
+    """
+    momentum:WEAK appeared on 401 closed trades and won 13.2% against a 22%
+    baseline, with an average peak of 6 — the worst component in the system,
+    and it was being paid +3.
+
+    None of the fifteen biggest winners had weak momentum: eleven were
+    EXPLOSIVE, four REAL, none weak. So penalising it costs no known winner.
+    """
+    print("\nweak momentum")
+    w = config.CONVICTION["momentum"]
+    check_true("weak momentum now costs", w["WEAK"] < 0)
+    check_true("explosive still earns most", w["EXPLOSIVE"] == max(w.values()))
+    check_true("real sits between", w["WEAK"] < w["REAL"] < w["EXPLOSIVE"])
+    # Fake data must never score better than genuinely weak trading.
+    check_true("fake is not rewarded either", w.get("FAKE", 0) <= 0)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1372,6 +1390,7 @@ def main():
     test_discovery_depth()
     test_winner_recovery()
     test_solana_infrastructure_holders()
+    test_weak_momentum_penalised()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

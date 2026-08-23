@@ -298,7 +298,11 @@ MARKET_HOURS_ADJUST = {
 
 # ── CONVICTION SCORING ────────────────────────────────────────────
 CONVICTION = {
-    "momentum":   {"EXPLOSIVE": 15, "REAL": 10, "WEAK": 3, "FAKE": 0},
+    # WEAK appeared on 401 closed trades and won 13.2% against a 22%
+    # baseline, average peak 6 — the worst component in the system, and it
+    # was being paid +3. None of the fifteen biggest winners had weak
+    # momentum: eleven EXPLOSIVE, four REAL, none weak.
+    "momentum":   {"EXPLOSIVE": 15, "REAL": 10, "WEAK": -12, "FAKE": -15},
     "launch":     {"GOLDEN_WINDOW": 15, "SWEET_SPOT": 10, "TOO_EARLY": -10,
                    "LATE": -5, "OLD": -5},
     "change_1h":  [(100, 15), (50, 10), (20, 5)],       # (threshold, points)
