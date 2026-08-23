@@ -1,0 +1,57 @@
+name: Derive
+
+# Looks at who was holding Surgeon's own winners early, promotes the wallets
+# that keep appearing, and retires the ones that stop. Daily is often enough:
+# it learns from closed trades, which accumulate slowly.
+on:
+  schedule:
+    - cron: "40 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report without promoting or retiring"
+        required: false
+        default: true
+        type: boolean
+      limit:
+        description: "How many winners to examine"
+        required: false
+        default: "60"
+        type: string
+      min_peak:
+        description: "Minimum peak % to count as a winner"
+        required: false
+        default: "100"
+        type: string
+
+concurrency:
+  group: surgeon-derive
+  cancel-in-progress: false
+
+jobs:
+  derive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SUPABASE_URL:     ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:     ${{ secrets.SUPABASE_KEY }}
+      HELIUS_API_KEY:   ${{ secrets.HELIUS_API_KEY }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Derive smart money
+        run: |
+          python3 derive.py \
+            --limit ${{ inputs.limit || '60' }} \
+            --min-peak ${{ inputs.min_peak || '100' }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
