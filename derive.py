@@ -70,12 +70,19 @@ def _evm_holders(chain: str, ca: str, top: int = 50) -> list[str]:
         return []
     data = http_get(f"{base}/api/v2/tokens/{ca}/holders")
     out = []
+    from chain_base import BURN_ADDRESSES
     for item in (data or {}).get("items", [])[:top]:
         addr = ((item.get("address") or {}).get("hash") or "").lower()
         is_contract = (item.get("address") or {}).get("is_contract")
-        # A contract holding tokens is a pool or a bridge, not a trader.
-        if addr and not is_contract:
-            out.append(addr)
+        # A contract holding tokens is a pool or a bridge, not a trader —
+        # and Blockscout does not flag the zero address as a contract, which
+        # is how it turned up holding seven winners at an average peak of
+        # 2,320%.
+        if not addr or is_contract or addr in BURN_ADDRESSES:
+            continue
+        if set(addr[2:]) <= {"0"} or addr.endswith("dead"):
+            continue
+        out.append(addr)
     return out
 
 
@@ -135,7 +142,41 @@ def measure(sample: list[dict]) -> dict[str, dict]:
     return dict(seen)
 
 
-def promote(measured: dict[str, dict], dry_run: bool = False) -> list[dict]:
+def losers(limit: int = 120, max_peak: float = 20.0) -> list[dict]:
+    """
+    Closed signals that went nowhere — the control group.
+
+    Without these, a wallet that buys every launch looks identical to one
+    that picks well: both appear in plenty of winners. The difference only
+    shows in what else they bought.
+    """
+    rows = store.select("signals", {
+        "select": "ca,chain,peak_pnl,outcome",
+        "outcome": "in.(LOSS,WEAK_WIN)",
+        "order": "alerted_at.desc",
+        "limit": str(limit * 2),
+    })
+    return [r for r in rows
+            if safe_float(r.get("peak_pnl")) <= max_peak][:limit]
+
+
+def count_appearances(sample: list[dict], wallets: set[str]) -> dict[str, int]:
+    """How many of these tokens each wallet held."""
+    counts: dict[str, int] = defaultdict(int)
+    for row in sample:
+        ca, chain = row.get("ca"), row.get("chain")
+        if not ca or not chain:
+            continue
+        for wallet in holders_of(chain, ca):
+            key = f"{chain}:{wallet}"
+            if key in wallets:
+                counts[key] += 1
+    return dict(counts)
+
+
+def promote(measured: dict[str, dict], dry_run: bool = False,
+            loser_counts: dict[str, int] | None = None,
+            n_losers: int = 0) -> list[dict]:
     """
     Wallets appearing across enough unrelated winners become smart money.
 
@@ -143,22 +184,38 @@ def promote(measured: dict[str, dict], dry_run: bool = False) -> list[dict]:
     by chance. Two is coincidence on a chain with a few thousand active
     wallets; the threshold sits above it.
     """
-    need = config.SMART_MONEY_DERIVED["min_winners"]
+    cfg = config.SMART_MONEY_DERIVED
+    need = cfg["min_winners"]
+    loser_counts = loser_counts or {}
     picks = []
 
-    for rec in measured.values():
+    for key, rec in measured.items():
         if rec["winners"] < need:
             continue
+
+        # Selectivity, not popularity. A wallet in nine winners and two
+        # hundred losers is buying everything; one in nine winners and a
+        # dozen losers is choosing.
+        lost = loser_counts.get(key, 0)
+        seen = rec["winners"] + lost
+        precision = rec["winners"] / seen if seen else 0.0
+        if n_losers and precision < cfg["min_precision"]:
+            continue
+
         picks.append({
             "address": rec["wallet"],
             "chain": rec["chain"],
-            "label": (f"derived: {rec['winners']} winners, "
-                      f"avg peak {rec['total_peak'] / rec['winners']:.0f}%"),
+            "label": (f"derived: {rec['winners']}W/{lost}L "
+                      f"({precision:.0%}), avg peak "
+                      f"{rec['total_peak'] / rec['winners']:.0f}%"),
             "active": True,
             "added_at": time.time(),
+            "_score": precision * rec["winners"],
         })
 
-    picks.sort(key=lambda p: -int(p["label"].split()[1]))
+    picks.sort(key=lambda p: -p["_score"])
+    for p in picks:
+        p.pop("_score", None)
     picks = picks[:config.SMART_MONEY_DERIVED["max_promote"]]
 
     if picks and not dry_run:
@@ -208,6 +265,8 @@ def main() -> int:
                     help="how many winners to examine")
     ap.add_argument("--min-peak", type=float, default=100.0,
                     help="minimum peak %% to count as a winner")
+    ap.add_argument("--losers", type=int, default=80,
+                    help="how many losing tokens to check candidates against")
     args = ap.parse_args()
 
     started = time.time()
@@ -226,7 +285,17 @@ def main() -> int:
     measured = measure(sample)
     log.info("%d distinct wallets held them", len(measured))
 
-    picks = promote(measured, args.dry_run)
+    # The control group: what else did these wallets buy?
+    candidates = {k for k, v in measured.items()
+                  if v["winners"] >= config.SMART_MONEY_DERIVED["min_winners"]}
+    loser_sample = losers(args.losers) if candidates else []
+    loser_counts = {}
+    if loser_sample:
+        log.info("checking %d candidates against %d tokens that went nowhere",
+                 len(candidates), len(loser_sample))
+        loser_counts = count_appearances(loser_sample, candidates)
+
+    picks = promote(measured, args.dry_run, loser_counts, len(loser_sample))
     retired = review_existing(measured, args.dry_run)
 
     print("\n" + "=" * 62)

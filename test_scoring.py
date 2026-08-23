@@ -1340,7 +1340,20 @@ def test_derived_smart_money():
     check_true("two winners does not", "0xtwice" not in promoted)
     check_true("one moonshot does not", "0xlucky" not in promoted)
     check_true("the evidence is recorded on the wallet",
-               all("winners" in p["label"] for p in picks))
+               all("W/" in p["label"] for p in picks))
+
+    # Winners alone cannot separate skill from volume: a wallet that buys
+    # every launch appears in plenty of winners. The control group is what
+    # else it bought.
+    heavy = measured(**{"robinhood:0xsniper": [f"t{i}" for i in range(9)],
+                        "robinhood:0xpicker": [f"w{i}" for i in range(9)]})
+    filtered = derive.promote(heavy, dry_run=True,
+                              loser_counts={"robinhood:0xsniper": 71,
+                                            "robinhood:0xpicker": 11},
+                              n_losers=80)
+    kept = {p["address"] for p in filtered}
+    check_true("a selective wallet is promoted", "0xpicker" in kept)
+    check_true("one that buys everything is not", "0xsniper" not in kept)
 
     # WEAK_WIN is excluded from the sample: a token closing +4% says nothing
     # about who was early, and there are enough to drown the real ones.

@@ -409,6 +409,9 @@ SMART_MONEY_DERIVED = {
     # Distinct winning tokens a wallet must appear in. Two is coincidence on
     # a chain with a few thousand active wallets; three is a pattern.
     "min_winners":         3,
+    # Of the tokens a candidate held, this share must be winners. A wallet in
+    # nine winners and two hundred losers is buying everything, not choosing.
+    "min_precision":     0.25,
     "max_promote":        15,
     # A newly added wallet gets this long before being judged, so it is not
     # retired for missing winners that closed before it was tracked.
