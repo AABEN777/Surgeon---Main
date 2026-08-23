@@ -75,27 +75,53 @@ def winners(limit: int = 200, min_peak: float = 100.0,
 
 # ── holder lookups ────────────────────────────────────────────────
 
-def _evm_holders(chain: str, ca: str, top: int = 50) -> list[str]:
-    """Holder addresses from a chain's Blockscout instance."""
+def _evm_early_buyers(chain: str, ca: str, want: int = 40) -> list[str]:
+    """
+    The first wallets to receive this token, from its transfer history.
+
+    Holder lists answer "who holds this now", which is the wrong question:
+    a token that mooned still has its holders, while one that died has been
+    abandoned. So the same wallet appears in the winner and has vanished from
+    the loser, and every candidate scores near-perfect selectivity on what is
+    really survivorship in a snapshot.
+
+    Transfers do not move. Whoever bought early is in the record whether they
+    held or dumped.
+    """
     base = config.CHAINS[chain].get("blockscout")
     if not base:
         return []
-    data = http_get(f"{base}/api/v2/tokens/{ca}/holders")
-    out = []
+
     from chain_base import BURN_ADDRESSES
-    for item in (data or {}).get("items", [])[:top]:
-        addr = ((item.get("address") or {}).get("hash") or "").lower()
-        is_contract = (item.get("address") or {}).get("is_contract")
-        # A contract holding tokens is a pool or a bridge, not a trader —
-        # and Blockscout does not flag the zero address as a contract, which
-        # is how it turned up holding seven winners at an average peak of
-        # 2,320%.
-        if not addr or is_contract or addr in BURN_ADDRESSES:
-            continue
-        if set(addr[2:]) <= {"0"} or addr.endswith("dead"):
-            continue
-        out.append(addr)
-    return out
+    seen, out = set(), []
+    url = f"{base}/api/v2/tokens/{ca}/transfers"
+    params: dict = {}
+
+    for _ in range(config.SMART_MONEY_DERIVED["transfer_pages"]):
+        data = http_get(url, params=params or None)
+        items = (data or {}).get("items") or []
+        if not items:
+            break
+
+        # Newest first, so the earliest buyers are on the last page reached.
+        for item in items:
+            to = ((item.get("to") or {}).get("hash") or "").lower()
+            is_contract = (item.get("to") or {}).get("is_contract")
+            if not to or is_contract or to in BURN_ADDRESSES:
+                continue
+            if set(to[2:]) <= {"0"} or to.endswith("dead"):
+                continue
+            if to not in seen:
+                seen.add(to)
+                out.append(to)
+
+        nxt = (data or {}).get("next_page_params")
+        if not nxt:
+            break
+        params = nxt
+
+    # Earliest first: the tail of a newest-first walk is the start of trading.
+    return list(reversed(out))[:want]
 
 
 def _solana_holders(ca: str, top: int = 50) -> list[str]:
@@ -115,10 +141,18 @@ def _solana_holders(ca: str, top: int = 50) -> list[str]:
 
 
 def holders_of(chain: str, ca: str) -> list[str]:
+    """
+    Wallets that were early to this token.
+
+    EVM chains with an explorer use transfer history, which survives the
+    token dying. Solana falls back to current holders, because RugCheck does
+    not expose transfers — so Solana results carry the survivorship bias this
+    was built to remove, and are reported separately rather than mixed in.
+    """
     try:
         if config.CHAINS[chain]["kind"] == "svm":
             return _solana_holders(ca)
-        return _evm_holders(chain, ca)
+        return _evm_early_buyers(chain, ca)
     except Exception as e:
         log.warning("holders for %s on %s failed: %s", ca[:12], chain, e)
         return []
@@ -346,11 +380,20 @@ def main() -> int:
     if picks:
         for p in picks:
             print(f"  + {p['chain']:<11} {p['address'][:20]}…  {p['label']}")
+        svm = [p for p in picks
+               if config.CHAINS[p["chain"]]["kind"] == "svm"]
         print()
-        print("  A wallet appearing in many winners on one chain may be a")
-        print("  deployer rather than a trader — the same team launching")
-        print("  several tokens puts one address in all of them. Worth")
-        print("  checking a couple on the explorer before trusting them.")
+        print("  A wallet in many winners on one chain may be a deployer")
+        print("  rather than a trader — one team launching several tokens")
+        print("  puts one address in all of them. Worth opening a couple on")
+        print("  the explorer before trusting them.")
+        if svm:
+            print()
+            print(f"  {len(svm)} of these are Solana, read from current")
+            print("  holders rather than transfers because RugCheck exposes")
+            print("  no transfer history. Those carry survivorship bias: a")
+            print("  dead token has been abandoned, so a wallet that bought")
+            print("  it no longer appears. Treat them as weaker evidence.")
     else:
         need = config.SMART_MONEY_DERIVED["min_winners"]
         best = max((r["winners"] for r in measured.values()), default=0)

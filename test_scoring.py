@@ -1397,6 +1397,24 @@ def test_derived_smart_money():
     check_true("losers can be bounded by time", "since" in sig.parameters)
     check_true("and by chain", "chain" in sig.parameters)
 
+    # Holder lists answer "who holds this now". A token that mooned still has
+    # its holders; one that died has been abandoned. So the same wallet
+    # appears in the winner and has vanished from the loser, and every
+    # candidate scores near-perfect selectivity on what is really
+    # survivorship in a snapshot. Transfers do not move.
+    holders_src = inspect.getsource(derive.holders_of)
+    check_true("evm reads early buyers from transfers",
+               "_evm_early_buyers" in holders_src)
+    check_true("the transfer walk is budgeted",
+               config.SMART_MONEY_DERIVED["transfer_pages"] > 0)
+    buyers_src = inspect.getsource(derive._evm_early_buyers)
+    check_true("it walks to the earliest transfers",
+               "reversed" in buyers_src)
+    check_true("contracts and burns are skipped",
+               "is_contract" in buyers_src and "BURN_ADDRESSES" in buyers_src)
+    # Solana has no transfer endpoint, so it keeps the bias and says so.
+    check_true("solana still uses holders", "_solana_holders" in holders_src)
+
     store_mod._mem["smart_wallets"] = []
 
 

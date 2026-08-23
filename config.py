@@ -413,6 +413,10 @@ SMART_MONEY_DERIVED = {
     # nine winners and two hundred losers is buying everything, not choosing.
     "min_precision":     0.25,
     "max_promote":        15,
+    # Pages of transfer history walked per token. Each is a request against
+    # an explorer that already returns intermittent 500s, so this is a
+    # budget rather than a preference.
+    "transfer_pages":      4,
     # A newly added wallet gets this long before being judged, so it is not
     # retired for missing winners that closed before it was tracked.
     "review_after_hours": 72,
