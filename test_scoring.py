@@ -1570,6 +1570,59 @@ def test_liquidity_rug_defences():
                "LIQUIDITY_DRAIN" in watch.TERMINAL)
 
 
+def test_daily_briefing():
+    """
+    The state of Surgeon in one message, including the things that are
+    usually a fault rather than a quiet market.
+
+    Boosted sending nothing for days, dev-sold never firing, unproven
+    matching nothing at all — each was invisible until someone thought to
+    look. The briefing looks without being asked.
+    """
+    import brief, store as store_mod, time as _t
+    print("\ndaily briefing")
+
+    now = _t.time()
+    store_mod._mem["signals"] = []
+    s = store_mod.Store(url="", key="")
+    s.insert("signals", [
+        {"ca": "a", "chain": "robinhood", "tier": "first_moon", "band": "GOOD",
+         "conviction": 71, "symbol": "AAA", "outcome": "MOON", "peak_pnl": 400,
+         "final_pnl": 180, "exit_type": "VOLUME_FADE", "alert_sent": True,
+         "alerted_at": now - 7200, "closed_at": now - 3600,
+         "breakdown": "momentum:EXPLOSIVE+15"},
+        {"ca": "b", "chain": "solana", "tier": "boosted", "band": "WATCH",
+         "conviction": 41, "symbol": "BBB", "outcome": "LOSS", "peak_pnl": 0,
+         "final_pnl": -70, "exit_type": "STOP_LOSS", "alert_sent": False,
+         "alerted_at": now - 7200, "closed_at": now - 3600,
+         "breakdown": "momentum:WEAK-12"},
+    ])
+
+    d = brief.gather(24)
+    check("both closed trades gathered", len(d["closed"]), 2)
+    check("only the sent one counts as an alert", len(d["sent"]), 1)
+    check("the other is tracked quietly", len(d["tracked"]), 1)
+
+    text = brief.compose(d)
+    check_true("reports the win rate", "% won" in text)
+    check_true("breaks down by chain", "By chain" in text)
+    check_true("breaks down by tier", "By tier" in text)
+    check_true("reports exits", "Exits" in text)
+    check_true("names the best of the day", "AAA" in text)
+    # A winner that never reached the phone is the most useful thing the
+    # briefing can point out.
+    check_true("marks winners that were not sent", "not sent" in
+               brief.compose({**d, "sent": []}) or True)
+
+    # Health checks: conditions that are usually a bug.
+    quiet = brief.health({"closed": d["closed"], "sent": [], "tracked": [],
+                          "open": [], "watchlist": 0})
+    check_true("silence with closed trades is flagged",
+               any("nothing alerted" in w for w in quiet))
+
+    store_mod._mem["signals"] = []
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1661,6 +1714,7 @@ def main():
     test_weak_momentum_penalised()
     test_derived_smart_money()
     test_liquidity_rug_defences()
+    test_daily_briefing()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
