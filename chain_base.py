@@ -97,6 +97,7 @@ class SafetyReport:
     holder_count: Optional[int] = None
     lp_locked_pct: Optional[float] = None
     lp_unlock_hours: Optional[float] = None   # None = burned or no expiry
+    lp_top_unlocked_pct: Optional[float] = None  # largest wallet that can pull
     lp_lock_kind: Optional[str] = None        # burned | locked | timed
     has_graduated_pool: Optional[bool] = None
     mint_authority: Optional[bool] = None

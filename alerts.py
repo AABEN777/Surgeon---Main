@@ -233,6 +233,7 @@ WATCH_HEADERS = {
     "TRAIL_STOP":   ("🛑", "TRAILING STOP"),
     "VOLUME_FADE":  ("📉", "VOLUME FADING"),
     "DEV_SOLD":     ("🚨", "DEV WALLET SOLD"),
+    "LIQUIDITY_DRAIN": ("🚨", "LIQUIDITY LEAVING"),
     "WHALE_STOP":   ("🐋", "WHALE APPEARED"),
     "TIME_STOP":    ("⏰", "TIME STOP"),
     "GRADUATION":   ("🎓", "GRADUATING"),

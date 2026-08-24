@@ -1512,6 +1512,64 @@ def test_derived_smart_money():
     store_mod._mem["smart_wallets"] = []
 
 
+def test_liquidity_rug_defences():
+    """
+    A Robinhood token with a 2.1% top holder — genuinely well distributed —
+    had its liquidity removed in a single transaction.
+
+    Token concentration and LP concentration are different risks, and only
+    the first was measured. Pulling a pool requires holding LP tokens, not
+    the token itself, so a perfectly spread holder base says nothing about
+    whether one wallet can drain it.
+    """
+    import risk, watch, time as _t
+    print("\nliquidity rug defences")
+
+    market = TokenMarket(ca="x", chain="robinhood", name="T", symbol="T",
+                         liquidity_usd=40000, fdv=90000, market_cap=90000,
+                         volume_24h=200000, volume_1h=80000, volume_5m=6000,
+                         price_usd=1.1, age_hours=1.0, age_known=True,
+                         dex="uniswap")
+
+    def lp_flag(lp_top):
+        s = SafetyReport(ca="x", chain="robinhood", sources=["goplus"],
+                         top_holder_pct=2.1, holder_count=800,
+                         lp_locked_pct=20.0, lp_top_unlocked_pct=lp_top,
+                         creator_holds_pct=0.1)
+        return [f for f in risk.assess(market, s) if f.code == "LP_PULLABLE"]
+
+    check("spread LP is not flagged", lp_flag(5.0), [])
+    check_true("a wallet holding 42% of the pool is", lp_flag(42.0))
+    check_true("holding the whole pool is severe",
+               lp_flag(95.0)[0].severity == "danger")
+    check_true("and it costs more than a partial hold",
+               lp_flag(95.0)[0].penalty < lp_flag(42.0)[0].penalty)
+    # Unknown is not safe, but it is also not evidence — the flag stays off
+    # and UNVERIFIED/partial handles the gap.
+    check("unknown LP holders raise nothing here", lp_flag(None), [])
+
+    # The live defence: liquidity leaving is the only rug signal that does
+    # not depend on trusting a safety check made minutes earlier.
+    now = _t.time()
+    row = {"ca": "x", "chain": "robinhood", "name": "T", "symbol": "T",
+           "entry_price": 1.0, "peak_price": 1.3, "alerted_at": now - 1800,
+           "liquidity_usd": 40000}
+
+    def drained(liq):
+        m = TokenMarket(ca="x", chain="robinhood", name="T", symbol="T",
+                        price_usd=1.1, liquidity_usd=liq, fdv=90000,
+                        volume_1h=40000, volume_5m=3000, dex="uniswap")
+        return "LIQUIDITY_DRAIN" in [e for e, _ in
+                                     watch.evaluate_position(row, m, None,
+                                                             set(), None)]
+
+    check_true("ordinary fluctuation is ignored", not drained(34000))
+    check_true("half the pool leaving fires", drained(21000))
+    check_true("a near-total pull fires", drained(600))
+    check_true("it closes the position",
+               "LIQUIDITY_DRAIN" in watch.TERMINAL)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1602,6 +1660,7 @@ def main():
     test_solana_infrastructure_holders()
     test_weak_momentum_penalised()
     test_derived_smart_money()
+    test_liquidity_rug_defences()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

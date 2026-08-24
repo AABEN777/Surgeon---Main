@@ -122,6 +122,27 @@ def _lock_expiring(safety) -> RiskFlag | None:
     return None
 
 
+def _lp_pullable(safety) -> RiskFlag | None:
+    """
+    A single wallet able to drain the pool.
+
+    Token concentration and LP concentration are different risks and we only
+    measured the first. A Robinhood token with a 2.1% top holder — genuinely
+    well distributed — had its liquidity removed in one transaction, because
+    pulling a pool requires holding LP tokens, not the token itself.
+    """
+    pct = safety.lp_top_unlocked_pct
+    if pct is None or pct <= config.SCAM["lp_pullable_pct"]:
+        return None
+    if pct >= 80:
+        return RiskFlag("LP_PULLABLE", f"one wallet holds {pct:.0f}% of the pool",
+                        -25, "danger")
+    if pct >= 50:
+        return RiskFlag("LP_PULLABLE", f"one wallet holds {pct:.0f}% of the pool",
+                        -16, "danger")
+    return RiskFlag("LP_PULLABLE", f"one wallet holds {pct:.0f}% of the pool", -8)
+
+
 def _thin_holders(safety) -> RiskFlag | None:
     n = safety.holder_count
     if n is None or n >= config.SCAM["min_holders"]:
@@ -154,6 +175,7 @@ CHECKS = (
     ("market", _thin_volume),
     ("safety", _bundled),
     ("safety", _lock_expiring),
+    ("safety", _lp_pullable),
     ("safety", _thin_holders),
     ("safety", _creator_heavy),
     ("safety", _unverified_safety),

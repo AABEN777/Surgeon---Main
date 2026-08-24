@@ -25,6 +25,7 @@ import config
 import chains
 import chain_base
 import alerts
+from alerts import money as alerts_money
 from store import store
 
 logging.basicConfig(
@@ -39,7 +40,7 @@ log = logging.getLogger("surgeon.watch")
 # STOP_WARN is deliberately absent: it notifies without ending the position,
 # so we keep observing and find out whether early dips recover.
 TERMINAL = {"STOP_LOSS", "TRAIL_STOP", "DEV_SOLD", "WHALE_STOP",
-            "VOLUME_FADE", "TIME_STOP", "MAX_HOLD"}
+            "VOLUME_FADE", "TIME_STOP", "MAX_HOLD", "LIQUIDITY_DRAIN"}
 
 
 @dataclass
@@ -144,6 +145,19 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
         if top is not None and top >= W["whale_top_holder_pct"]:
             out.append(("WHALE_STOP",
                         f"top holder now {top:.0f}% — concentration built after entry"))
+
+    # -- liquidity leaving -----------------------------------------
+    # The only rug signal that does not depend on trusting a safety check.
+    # A Robinhood token with a 2.1% top holder had its pool drained in one
+    # transaction; nothing about its holder distribution predicted that, but
+    # the liquidity itself would have shown it going.
+    entry_liq = float(row.get("liquidity_usd") or 0)
+    if entry_liq > 0 and "LIQUIDITY_DRAIN" not in fired:
+        remaining = market.liquidity_usd / entry_liq
+        if remaining <= W["liquidity_drain_ratio"]:
+            out.append(("LIQUIDITY_DRAIN",
+                        f"pool down to {remaining:.0%} of its size at signal "
+                        f"({alerts_money(market.liquidity_usd)} left)"))
 
     # -- momentum dying while in profit ----------------------------
     if "VOLUME_FADE" not in fired and pnl >= W["volume_fade_min_pnl"]:

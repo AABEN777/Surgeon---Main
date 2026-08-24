@@ -261,6 +261,9 @@ SCAM = {
     # Inside this window the penalty is halved: a holder base takes hours to
     # spread, and two of the biggest winners were charged full price for it.
     "top_holder_grace_hours": 1.0,
+    # Unlocked LP held by a single wallet. This is the rug vector that token
+    # distribution cannot see.
+    "lp_pullable_pct":      35.0,
     "min_volume_to_mcap":    0.80,  # 24h volume under this share of cap
     "bundled_pct":          15.0,   # supply held by launch-bundled wallets
     "min_holders":          50,
@@ -534,6 +537,9 @@ WATCH = {
     # before price does, so lean on the leading indicator.
     "volume_fade_ratio":  0.45,
     "volume_fade_min_pnl":  10,
+    # Pool shrunk to this share of its size at signal. Fires before the pool
+    # is empty, which is the only warning a sudden pull ever gives.
+    "liquidity_drain_ratio": 0.55,
     "dev_sold_fraction":   0.5,   # deployer shedding this much of its bag
     "whale_recheck_hours":   2,
     "whale_recheck_min_pnl": 30,

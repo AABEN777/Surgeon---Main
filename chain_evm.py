@@ -147,11 +147,19 @@ class EvmAdapter(ChainAdapter):
         lp_holders = result.get("lp_holders")
         if lp_holders:
             locked = 0.0
+            top_unlocked = 0.0
             for h in lp_holders:
                 addr = (h.get("address") or "").lower()
                 pct = safe_float(h.get("percent")) * 100.0
                 if addr in BURN_ADDRESSES or h.get("is_locked") in (1, "1"):
                     locked += pct
+                else:
+                    # Whoever holds unlocked LP can drain the pool whenever
+                    # they like. Token distribution says nothing about this:
+                    # a token can have a 2.1% top holder and still have one
+                    # wallet holding the entire pool.
+                    top_unlocked = max(top_unlocked, pct)
+            rep.lp_top_unlocked_pct = round(top_unlocked, 2)
             rep.lp_locked_pct = round(locked, 2)
             rep.has_graduated_pool = True
             if rep.lp_locked_pct < config.SAFETY["min_lp_locked_pct"]:
