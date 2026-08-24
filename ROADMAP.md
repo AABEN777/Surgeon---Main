@@ -176,7 +176,19 @@ hand every check-in and makes drift visible without being asked.
 across 94 trades — the worst cell with a real sample, and a third of all
 signals land there. Both extremes beat it. Wait for 250+ trades before acting.
 
-## 8. EVM holder data gap
+## 8. EVM holder data gap — BUILT
+
+Base and BSC return no holder distribution for tokens under roughly fifteen
+minutes old: GoPlus has not scanned them and Blockscout 404s. Every early EVM
+signal was scored on momentum with the concentration field blank, and nothing
+went back to look.
+
+The watcher now re-reads safety at 15 and 60 minutes for any position whose
+report was partial or unverified. An ordinary reading says nothing; a notable
+one reports; a reading past the hard-reject line closes the position, because
+stating a fact and ignoring it is worse than not knowing.
+
+## 8b. EVM holder data gap (original note)
 
 On Base and BNB Chain, tokens under roughly fifteen minutes old have no
 holder distribution at all — GoPlus has not scanned them, Blockscout 404s.

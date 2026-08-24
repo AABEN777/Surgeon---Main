@@ -238,6 +238,7 @@ WATCH_HEADERS = {
     "DEV_SOLD":     ("🚨", "DEV WALLET SOLD"),
     "LIQUIDITY_DRAIN": ("🚨", "LIQUIDITY LEAVING"),
     "WHALE_STOP":   ("🐋", "WHALE APPEARED"),
+    "SAFETY_RECHECK": ("🔍", "SAFETY DATA ARRIVED"),
     "TIME_STOP":    ("⏰", "TIME STOP"),
     "GRADUATION":   ("🎓", "GRADUATING"),
 }

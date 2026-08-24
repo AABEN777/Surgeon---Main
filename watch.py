@@ -39,6 +39,9 @@ log = logging.getLogger("surgeon.watch")
 # Events that end a position. The rest are milestones along the way.
 # STOP_WARN is deliberately absent: it notifies without ending the position,
 # so we keep observing and find out whether early dips recover.
+# SAFETY_RECHECK is absent deliberately: it reports what we could not read
+# earlier, and King decides. Only a reading past the hard-reject line escalates
+# to WHALE_STOP, which does close the position.
 TERMINAL = {"STOP_LOSS", "TRAIL_STOP", "DEV_SOLD", "WHALE_STOP",
             "VOLUME_FADE", "TIME_STOP", "MAX_HOLD", "LIQUIDITY_DRAIN"}
 
@@ -136,6 +139,28 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
                 out.append(("DEV_SOLD",
                             f"deployer sold {dumped:.0%} of its holding "
                             f"({then_pct:.2f}% -> {now_pct:.2f}%)"))
+
+    # -- safety that could not be read at signal time --------------
+    # A partial report is not a clean one. Base and BSC serve no holder
+    # distribution for tokens minutes old, so an early signal there is scored
+    # on momentum with the concentration field simply blank.
+    if safety is not None and "SAFETY_RECHECK" not in fired:
+        was_thin = ("top_holder_pct" in str(row.get("unavailable") or "")
+                    or str(row.get("safety_verdict") or "") in
+                    ("PASS_PARTIAL", "UNVERIFIED"))
+        top = safety.top_holder_pct
+        if was_thin and top is not None:
+            if top >= config.SAFETY["max_top_holder_pct"]:
+                # This reading would have blocked the signal outright. Saying
+                # so and leaving the position open would be reporting a fact
+                # while ignoring it.
+                out.append(("WHALE_STOP",
+                            f"holder data arrived — top holder {top:.1f}%, "
+                            f"past the {config.SAFETY['max_top_holder_pct']:.0f}% "
+                            f"line that would have blocked this signal"))
+            elif top >= config.SCAM["top_holder_pct"] * 3:
+                out.append(("SAFETY_RECHECK",
+                            f"holder data arrived — top holder {top:.1f}%"))
 
     # -- whale concentration appearing after entry -----------------
     if (safety is not None and "WHALE_STOP" not in fired
@@ -279,10 +304,20 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
             whale_due = (held_hours >= config.WATCH["whale_recheck_hours"]
                          and pnl >= config.WATCH["whale_recheck_min_pnl"]
                          and "WHALE_STOP" not in fired)
+            # A signal recorded without holder data deserves a second look
+            # once the indexers have caught up.
+            gaps = str(row.get("unavailable") or "")
+            thin = ("top_holder_pct" in gaps
+                    or str(row.get("safety_verdict") or "") in
+                    ("PASS_PARTIAL", "UNVERIFIED"))
+            checkpoints = config.WATCH["safety_recheck_minutes"]
+            held_minutes = held_hours * 60
+            recheck_due = thin and "SAFETY_RECHECK" not in fired and any(
+                held_minutes >= m for m in checkpoints)
             # A deployer dumping is worth knowing about immediately, not only
             # once a position is hours old and in profit.
             dev_due = bool(row.get("dev_held")) and "DEV_SOLD" not in fired
-            if whale_due or dev_due:
+            if whale_due or dev_due or recheck_due:
                 safety = adapter.safety(ca, market.pair_address)
 
             events = evaluate_position(row, market, adapter, fired, safety)

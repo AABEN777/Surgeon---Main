@@ -1635,6 +1635,55 @@ def test_daily_briefing():
     store_mod._mem["signals"] = []
 
 
+def test_evm_safety_recheck():
+    """
+    Base and BSC return no holder distribution for tokens under roughly
+    fifteen minutes old — GoPlus has not scanned them and Blockscout 404s.
+    Every early EVM signal is therefore scored on momentum with the
+    concentration field simply blank, and nothing ever went back to look.
+    """
+    import watch, time as _t
+    print("\nevm safety recheck")
+
+    now = _t.time()
+
+    def row(mins=20, gaps="top_holder_pct", verdict="PASS_PARTIAL"):
+        return {"ca": "x", "chain": "base", "name": "T", "symbol": "T",
+                "entry_price": 1.0, "peak_price": 1.2,
+                "alerted_at": now - mins * 60, "liquidity_usd": 40000,
+                "unavailable": gaps, "safety_verdict": verdict}
+
+    market = TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                         price_usd=1.15, liquidity_usd=40000, fdv=90000,
+                         volume_1h=40000, volume_5m=3000, dex="uniswap")
+
+    def events(r, top):
+        s = SafetyReport(ca="x", chain="base", sources=["goplus"],
+                         top_holder_pct=top, holder_count=500, honeypot=False)
+        return [e for e, _ in watch.evaluate_position(r, market, None, set(), s)]
+
+    check_true("an ordinary reading says nothing",
+               "SAFETY_RECHECK" not in events(row(), 4.0))
+    check_true("a notable reading is reported",
+               "SAFETY_RECHECK" in events(row(), 12.0))
+    # A reading past the hard-reject line would have blocked the signal.
+    # Reporting it and leaving the position open would be stating a fact and
+    # ignoring it.
+    check_true("a blocking reading closes the position",
+               "WHALE_STOP" in events(row(), 31.0))
+    check_true("and WHALE_STOP is terminal", "WHALE_STOP" in watch.TERMINAL)
+    # Merely informative, so King decides.
+    check_true("a notable reading does not close",
+               "SAFETY_RECHECK" not in watch.TERMINAL)
+
+    # Signals whose safety was complete at the time are left alone.
+    check_true("complete safety is not revisited",
+               "SAFETY_RECHECK" not in events(row(gaps="", verdict="PASS"), 12.0))
+
+    check_true("checkpoints are configured",
+               len(config.WATCH["safety_recheck_minutes"]) >= 2)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1727,6 +1776,7 @@ def main():
     test_derived_smart_money()
     test_liquidity_rug_defences()
     test_daily_briefing()
+    test_evm_safety_recheck()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

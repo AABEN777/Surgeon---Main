@@ -544,6 +544,12 @@ WATCH = {
     # is empty, which is the only warning a sudden pull ever gives.
     "liquidity_drain_ratio": 0.55,
     "dev_sold_fraction":   0.5,   # deployer shedding this much of its bag
+    # Base and BSC return no holder distribution for tokens under roughly
+    # fifteen minutes old — GoPlus has not scanned them and Blockscout 404s.
+    # Every early EVM signal therefore scores with safety_partial and an
+    # unchecked top holder. Re-reading it once the indexers catch up turns a
+    # guess into a fact, and can still stop a position that looked clean.
+    "safety_recheck_minutes": [15, 60],
     "whale_recheck_hours":   2,
     "whale_recheck_min_pnl": 30,
     "whale_top_holder_pct":  30,
