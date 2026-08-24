@@ -94,6 +94,9 @@ class SafetyReport:
     top_holder_pct: Optional[float] = None
     top10_pct: Optional[float] = None
     insider_pct: Optional[float] = None      # supply bundled at launch
+    cluster_wallets: Optional[int] = None    # addresses acting together
+    cluster_supply_pct: Optional[float] = None
+    cluster_how: str = ""
     holder_count: Optional[int] = None
     lp_locked_pct: Optional[float] = None
     lp_unlock_hours: Optional[float] = None   # None = burned or no expiry
@@ -153,6 +156,12 @@ class SafetyReport:
         bits = []
         if self.top_holder_pct is not None:
             bits.append(f"Top holder {self.top_holder_pct:.1f}%")
+        # The aggregate is what bundling hides behind, so it is stated
+        # alongside rather than left in the data.
+        if self.top10_pct is not None:
+            bits.append(f"top 10 {self.top10_pct:.0f}%")
+        if self.cluster_wallets:
+            bits.append(f"⚠ {self.cluster_wallets} linked wallets")
         elif "top_holder_pct" in self.unavailable:
             bits.append("Top holder n/a")
         if self.lp_locked_pct is not None:

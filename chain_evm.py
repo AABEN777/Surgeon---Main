@@ -14,6 +14,7 @@ handled explicitly: missing fields land in `unavailable` and the alert says
 from __future__ import annotations
 
 import time
+import logging
 from typing import Optional
 
 import config
@@ -22,6 +23,8 @@ from chain_base import (
     http_get, safe_float, safe_int,
     BURN_ADDRESSES, is_infrastructure_holder,
 )
+
+log = logging.getLogger("surgeon.evm")
 
 GOPLUS_TOKEN = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
 GOPLUS_CHAINS = "https://api.gopluslabs.io/api/v1/supported_chains"
@@ -46,6 +49,7 @@ class EvmAdapter(ChainAdapter):
         # Holder distribution is the field we refuse to guess at.
         if rep.top_holder_pct is None and self.blockscout:
             self._apply_blockscout_holders(rep, ca, pair_address)
+            self._apply_clusters(rep, ca, pair_address or "")
 
         for f in ("top_holder_pct", "lp_locked_pct"):
             if getattr(rep, f) is None and f not in rep.unavailable:
@@ -268,3 +272,44 @@ class EvmAdapter(ChainAdapter):
             act.sold = True
             act.sold_amount = sold
         return act
+
+
+    def _apply_clusters(self, rep, ca: str, pair_address: str = ""):
+        """
+        Wallets seeded by one address before trading opened.
+
+        One request, cached permanently — transfer history never changes, and
+        this endpoint is the one already returning 429s. A token checked once
+        is never fetched again.
+        """
+        try:
+            from store import store
+            key = f"{self.chain}:{ca}"
+            rows = store.select("token_clusters", {
+                "select": "wallets,supply_pct,how",
+                "ca": f"eq.{ca}", "chain": f"eq.{self.chain}", "limit": "1"})
+            if rows:
+                row = rows[0]
+                if row.get("wallets"):
+                    rep.cluster_wallets = int(row["wallets"])
+                    rep.cluster_supply_pct = safe_float(row.get("supply_pct"))
+                    rep.cluster_how = row.get("how") or "seeded together"
+                    rep.flags.append(f"cluster_{rep.cluster_wallets}_wallets")
+                return
+
+            import clusters as cluster_mod
+            found = cluster_mod.evm_clusters(
+                self.chain, ca, exclude={pair_address} if pair_address else None)
+            top = cluster_mod.worst(found)
+            payload = {"ca": ca, "chain": self.chain,
+                       "wallets": top.size if top else 0,
+                       "supply_pct": round(top.supply_pct, 2) if top else 0.0,
+                       "how": top.how if top else ""}
+            store.upsert("token_clusters", payload, on_conflict="ca,chain")
+            if top:
+                rep.cluster_wallets = top.size
+                rep.cluster_supply_pct = round(top.supply_pct, 2)
+                rep.cluster_how = top.how
+                rep.flags.append(f"cluster_{top.size}_wallets")
+        except Exception as e:
+            log.debug("cluster check failed for %s: %s", ca[:10], e)

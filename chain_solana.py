@@ -12,11 +12,14 @@ import time
 from typing import Optional
 
 import config
+import logging
 from chain_base import (
     is_solana_infrastructure, solana_pool_accounts,
     ChainAdapter, SafetyReport, CreatorActivity,
     http_get, safe_float, safe_int,
 )
+
+log = logging.getLogger("surgeon.solana")
 
 RUGCHECK = "https://api.rugcheck.xyz/v1/tokens/{ca}/report"
 HELIUS_TX = "https://api.helius.xyz/v0/addresses/{addr}/transactions"
@@ -146,6 +149,22 @@ class SolanaAdapter(ChainAdapter):
                     if rep.lp_locked_pct < config.SAFETY["min_lp_locked_pct"]:
                         rep.hard_rejects.append(
                             f"lp_unlocked_{rep.lp_locked_pct:.0f}pct")
+
+        # -- wallets acting together ------------------------------
+        # RugCheck has already linked these by funding and timing. Surgeon
+        # summed their holdings into insider_pct and discarded how many
+        # separate hands were involved, which is the part that matters.
+        try:
+            import clusters as cluster_mod
+            found = cluster_mod.solana_clusters(data)
+            top = cluster_mod.worst(found)
+            if top:
+                rep.cluster_wallets = top.size
+                rep.cluster_supply_pct = round(top.supply_pct, 2)
+                rep.cluster_how = top.how
+                rep.flags.append(f"cluster_{top.size}_wallets")
+        except Exception as e:
+            log.debug("cluster read failed for %s: %s", ca[:10], e)
 
         # -- how long the lock actually lasts ---------------------
         # A lock expiring this afternoon is not protection. RugCheck returns

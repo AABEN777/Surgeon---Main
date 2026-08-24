@@ -816,6 +816,11 @@ def test_alert_threshold():
     check_true("weak signal never alerts", not weak.should_alert)
 
 
+def derive_mod():
+    import derive
+    return derive
+
+
 def test_entrypoints_resolve():
     """
     A name used in one function but defined in another is invisible until a
@@ -828,11 +833,17 @@ def test_entrypoints_resolve():
     print("\nentrypoint name resolution")
 
     def undefined_names(fn):
-        src = inspect.getsource(fn)
+        # Methods arrive indented, so they will not parse on their own.
+        import textwrap
+        src = textwrap.dedent(inspect.getsource(fn))
         tree = ast.parse(src).body[0]
         names = {a.arg for a in tree.args.args}
         for node in ast.walk(tree):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            # Imports made inside a function bind names too.
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for a in node.names:
+                    names.add(a.asname or a.name.split(".")[0])
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 names.add(node.id)
             elif isinstance(node, (ast.For, ast.comprehension)):
                 for n in ast.walk(node.target):
@@ -852,6 +863,28 @@ def test_entrypoints_resolve():
                watch.watch_chain, watch.evaluate_position, watch.main,
                analyze.analyze, analyze.render, analyze.render_telegram):
         check(f"{fn.__module__}.{fn.__name__} resolves", undefined_names(fn), [])
+
+    # Methods too. The earlier version checked only module-level functions,
+    # and missed a `log.debug` call in an adapter method whose module had no
+    # logger — every safety check on Robinhood and Base would have raised
+    # NameError, and all 326 tests passed because none touched a live
+    # adapter.
+    import chain_evm, chain_solana, chains as chains_mod, clusters
+    for mod in (chain_evm, chain_solana, chains_mod, clusters, derive_mod()):
+        for name in dir(mod):
+            obj = getattr(mod, name)
+            # Only classes this module defines — stdlib types imported into
+            # its namespace are not ours to verify.
+            if isinstance(obj, type) and getattr(obj, "__module__", "") == mod.__name__:
+                for meth_name in vars(obj):
+                    meth = getattr(obj, meth_name, None)
+                    if callable(meth) and not meth_name.startswith("__"):
+                        try:
+                            check(f"{mod.__name__}.{name}.{meth_name} resolves",
+                                  undefined_names(meth), [])
+                        except (TypeError, OSError, SyntaxError,
+                                IndentationError):
+                            pass
 
 
 def test_channel_calls():
@@ -1684,6 +1717,139 @@ def test_evm_safety_recheck():
                len(config.WATCH["safety_recheck_minutes"]) >= 2)
 
 
+def test_bundled_distribution():
+    """
+    CyberPump: 0.5% top holder, LP 100% locked, scored CLEAN at 60/100, and
+    was dumped into its own pool.
+
+    Nobody pulled liquidity — the supply was dumped. And the 0.5% top holder
+    was the warning, not the reassurance: bundling produces a *low* largest
+    holder, because splitting supply across two hundred wallets leaves nobody
+    holding anything. Organic early distribution is a power law; someone
+    always bought more than everyone else.
+    """
+    import risk
+    print("\nbundled distribution")
+
+    def tok(age):
+        return TokenMarket(ca="x", chain="solana", name="CyberPump",
+                           symbol="CYBERPUMP", liquidity_usd=45800,
+                           fdv=309100, market_cap=309100, volume_24h=457000,
+                           volume_1h=200000, volume_5m=20000, change_5m=3.0,
+                           change_1h=346.0, buys_5m=816, sells_5m=219,
+                           age_hours=age, age_known=True, dex="pumpswap",
+                           launchpad="pumpfun")
+
+    def codes(age, top1, top10):
+        s = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                         top_holder_pct=top1, top10_pct=top10,
+                         insider_pct=0.0, holder_count=1400,
+                         lp_locked_pct=100.0, creator_holds_pct=0.0,
+                         risk_raw=1)
+        return {f.code for f in risk.assess(tok(age), s)}
+
+    check_true("CyberPump's shape is caught", "EVEN_SPLIT" in codes(1.2, 0.5, 4.8))
+    # A small top holder with a power law beneath it is just a small token.
+    check_true("a power law is not bundling",
+               "EVEN_SPLIT" not in codes(1.2, 0.5, 2.1))
+    check_true("someone buying big is not bundling",
+               "EVEN_SPLIT" not in codes(1.2, 6.2, 22.0))
+    # Distribution genuinely does flatten with age.
+    check_true("an older token is not judged this way",
+               "EVEN_SPLIT" not in codes(14.0, 0.5, 4.8))
+
+    # King's request: warn when the top holders hold more than 10% between
+    # them. A single top holder is the number bundling is built to defeat.
+    check_true("aggregate concentration is flagged",
+               "TOP10" in codes(1.2, 6.2, 22.0))
+    check_true("a modest top ten is not", "TOP10" not in codes(1.2, 2.0, 8.0))
+    check("the warning line is 10%", config.SCAM["top10_pct"], 10.0)
+
+    # And it is stated in the alert rather than left in the data.
+    line = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                        top_holder_pct=0.5, top10_pct=5.0,
+                        lp_locked_pct=100.0, holder_count=1400,
+                        risk_raw=1).display()
+    check_true("top ten appears in the safety line", "top 10 5%" in line)
+
+
+def test_wallet_clusters():
+    """
+    What Bubblemaps shows visually: wallets that are not independent.
+
+    Supply spread across two hundred addresses reads clean in every
+    per-wallet metric — that is the point of spreading it — and dumps as one
+    position, because it is one position. Counting the addresses that share a
+    hand is the thing no amount of splitting reduces.
+    """
+    import clusters, risk
+    print("\nwallet clusters")
+
+    # Solana: RugCheck already links wallets by funding and timing. Surgeon
+    # summed their holdings into insider_pct and discarded how many separate
+    # hands were involved.
+    found = clusters.solana_clusters({"insiderNetworks": [
+        {"id": "n1", "size": 41, "tokenAmountPct": 0.23},
+        {"id": "n2", "size": 6, "tokenAmountPct": 0.02}]})
+    check("only meaningful networks count", len(found), 1)
+    check("the largest is reported", clusters.worst(found).size, 41)
+    check_true("described in plain terms",
+               "41 wallets" in clusters.describe(found))
+
+    # EVM: one address seeding many wallets before trading opens.
+    def evm(history, exclude=None):
+        real = clusters.http_get
+        clusters.http_get = lambda *a, **k: history
+        try:
+            return clusters.evm_clusters("base", "0xTOKEN", exclude=exclude)
+        finally:
+            clusters.http_get = real
+
+    seeded = evm({"result": [{"from": "0xdeployer", "to": f"0xw{i:03d}",
+                              "value": "1000"} for i in range(40)]},
+                 exclude={"0xpool"})
+    check_true("a deployer seeding forty wallets is caught", seeded)
+
+    # The pool must be excluded or every buyer counts as its recipient: a
+    # token with thirty ordinary buys reads as one address seeding thirty
+    # wallets, which is trading, not bundling.
+    trading = evm({"result": [{"from": "0xpool", "to": f"0xbuyer{i}",
+                               "value": "10"} for i in range(30)]},
+                  exclude={"0xpool"})
+    check("ordinary trading is not a cluster", trading, [])
+
+    check("a handful of wallets is below the line",
+          evm({"result": [{"from": "0xdev", "to": f"0xw{i}", "value": "100"}
+                          for i in range(4)]}, exclude={"0xpool"}), [])
+
+    # And a bundle hidden inside real trading is still found.
+    mixed = evm({"result":
+                 [{"from": "0xpool", "to": f"0xb{i}", "value": "10"}
+                  for i in range(25)] +
+                 [{"from": "0xdeployer", "to": f"0xw{i}", "value": "900"}
+                  for i in range(30)]}, exclude={"0xpool"})
+    check_true("a bundle hidden among real buys is found", mixed)
+
+    # Scoring: scaled by how many wallets and how much they hold.
+    market = TokenMarket(ca="x", chain="solana", name="T", symbol="T",
+                         liquidity_usd=45000, fdv=300000, market_cap=300000,
+                         volume_24h=400000, volume_1h=180000, age_hours=1.2,
+                         age_known=True, dex="pumpswap")
+
+    def penalty(n, pct):
+        s = SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                         top_holder_pct=0.5, top10_pct=4.8, holder_count=1400,
+                         lp_locked_pct=100.0, creator_holds_pct=0.0,
+                         risk_raw=1, cluster_wallets=n,
+                         cluster_supply_pct=pct, cluster_how="funded together")
+        f = [x for x in risk.assess(market, s) if x.code == "CLUSTER"]
+        return f[0].penalty if f else 0
+
+    check("no cluster costs nothing", penalty(None, 0), 0)
+    check_true("nine wallets costs something", penalty(9, 4.0) < 0)
+    check_true("forty-one costs much more", penalty(41, 23.0) < penalty(9, 4.0))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1722,9 +1888,22 @@ def main():
 
     print("\nunverified penalty")
     bare = SafetyReport(ca="z", chain="robinhood")
+    # Compared against a genuinely clean report. REDDIT_SAFETY has 39.78% in
+    # its top ten, and knowing that costs more than knowing nothing — which
+    # is right, but makes it the wrong yardstick for this assertion.
+    clean = SafetyReport(ca="z", chain="robinhood", sources=["goplus"],
+                         top_holder_pct=2.4, top10_pct=11.0,
+                         holder_count=900, lp_locked_pct=100.0,
+                         creator_holds_pct=0.1, honeypot=False)
     unv = scoring.conviction_score(REDDIT, bare)
-    ver = scoring.conviction_score(REDDIT, REDDIT_SAFETY)
-    check_true("unverified scores lower than verified", unv.score < ver.score)
+    ver = scoring.conviction_score(REDDIT, clean)
+    check_true("unverified scores lower than a clean report",
+               unv.score < ver.score)
+    # And a known-bad report should cost more than an unreadable one:
+    # not knowing is a risk, knowing it is bad is worse.
+    known_bad = scoring.conviction_score(REDDIT, REDDIT_SAFETY)
+    check_true("known concentration costs more than the unknown",
+               known_bad.score < unv.score)
     check_true("UNVERIFIED component present",
                any(l == "UNVERIFIED" for l, _ in unv.components))
 
@@ -1777,6 +1956,8 @@ def main():
     test_liquidity_rug_defences()
     test_daily_briefing()
     test_evm_safety_recheck()
+    test_bundled_distribution()
+    test_wallet_clusters()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

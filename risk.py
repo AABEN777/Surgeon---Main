@@ -64,6 +64,89 @@ def _top_holder(safety, market=None) -> RiskFlag | None:
     return RiskFlag("TOP_HOLDER", f"{pct:.1f}% in one wallet", points, severity)
 
 
+def _top10(safety) -> RiskFlag | None:
+    """
+    What the ten largest wallets hold between them.
+
+    A single top holder is the number bundling is designed to defeat: split
+    the supply across enough wallets and no one of them looks large.
+    CyberPump showed a 0.5% top holder, read as CLEAN, and was dumped into
+    its own locked pool by the wallets holding the rest.
+    """
+    pct = safety.top10_pct
+    if pct is None or pct <= config.SCAM["top10_pct"]:
+        return None
+    if pct >= 40:
+        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -25, "danger")
+    if pct >= 25:
+        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -16, "danger")
+    if pct >= 15:
+        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -9)
+    return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -5)
+
+
+def _bundled_distribution(safety, market=None) -> RiskFlag | None:
+    """
+    A distribution too flat to have happened on its own.
+
+    Bundling produces a *low* top holder, not a high one: split the supply
+    across two hundred wallets at half a percent each and the top ten hold
+    five percent between them. CyberPump read 0.5% top holder at 1.2 hours
+    old, was scored CLEAN, and was dumped into its own locked pool.
+
+    Organic early distribution is a power law — someone always bought more
+    than everyone else. When the largest holder of a young token holds almost
+    nothing, and the next nine hold the same almost-nothing, the supply was
+    placed rather than bought.
+    """
+    top1, top10 = safety.top_holder_pct, safety.top10_pct
+    if top1 is None or top1 <= 0:
+        return None
+
+    age = getattr(market, "age_hours", None) if market else None
+    known = getattr(market, "age_known", False) if market else False
+    if not known or age is None or age > config.SCAM["bundle_max_age_hours"]:
+        return None          # older tokens genuinely do flatten out
+
+    if top1 > config.SCAM["bundle_max_top1"]:
+        return None          # someone holds a real position, as expected
+
+    detail = f"largest holder just {top1:.2f}% at {age * 60:.0f}m old"
+    if top10 is not None and top10 > 0:
+        # 1.0 means all ten hold exactly the same amount.
+        uniformity = top10 / (top1 * 10)
+        if uniformity < config.SCAM["bundle_uniformity"]:
+            return None      # still a power law, just a small one
+        detail += f", top 10 all near {top1:.2f}%"
+
+    return RiskFlag("EVEN_SPLIT", detail, -18, "danger")
+
+
+def _wallet_cluster(safety) -> RiskFlag | None:
+    """
+    Many wallets, one hand.
+
+    Every per-wallet metric reads clean when supply is split across enough
+    addresses — that is the point of splitting it. This counts the addresses
+    that are not independent, which no amount of splitting reduces.
+    """
+    n = safety.cluster_wallets
+    if not n or n < config.CLUSTERS["min_wallets"]:
+        return None
+    pct = safety.cluster_supply_pct or 0.0
+    detail = f"{n} wallets {safety.cluster_how or 'acting together'}"
+    if pct > 0:
+        detail += f", {pct:.0f}% of supply"
+
+    severe = (n >= config.CLUSTERS["danger_wallets"]
+              or pct >= config.CLUSTERS["danger_supply_pct"])
+    if severe:
+        return RiskFlag("CLUSTER", detail, -28, "danger")
+    if n >= config.CLUSTERS["min_wallets"] * 2:
+        return RiskFlag("CLUSTER", detail, -18, "danger")
+    return RiskFlag("CLUSTER", detail, -10)
+
+
 def _thin_volume(market) -> RiskFlag | None:
     """
     Volume well below market cap means the valuation is not being tested.
@@ -172,6 +255,9 @@ def _unverified_safety(safety) -> RiskFlag | None:
 
 CHECKS = (
     ("safety_market", _top_holder),
+    ("safety", _top10),
+    ("safety_market", _bundled_distribution),
+    ("safety", _wallet_cluster),
     ("market", _thin_volume),
     ("safety", _bundled),
     ("safety", _lock_expiring),

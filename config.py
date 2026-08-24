@@ -251,6 +251,17 @@ SAFETY = {
     "unverified_policy":    "flag",
 }
 
+# ── WALLET CLUSTERS ───────────────────────────────────────────────
+# What Bubblemaps shows visually: wallets that are not independent. Supply
+# across two hundred addresses looks like distribution in every per-wallet
+# metric and dumps as one position, because it is one position.
+CLUSTERS = {
+    "min_wallets":            8,    # addresses acting together
+    "transfers_examined":   200,    # earliest transfers read, EVM
+    "danger_wallets":        25,
+    "danger_supply_pct":     20.0,
+}
+
 # ── SCAM HEURISTICS ───────────────────────────────────────────────
 # Trader-supplied tells, far tighter than the entry gates. Applied as
 # conviction penalties rather than rejects — as rejects they would silence
@@ -261,6 +272,15 @@ SCAM = {
     # else changes — the checks are additive, not a rewrite.
     "enabled":            True,
     "top_holder_pct":        3.5,   # single wallet above this is a warning
+    # What the ten largest hold between them. A single top holder is the
+    # number bundling is built to defeat.
+    "top10_pct":            10.0,
+    # Bundling shows up as a *low* top holder: supply split across two
+    # hundred wallets leaves nobody holding anything. Organic early
+    # distribution is a power law — someone always bought more.
+    "bundle_max_top1":       1.5,   # largest holder below this, on a young token
+    "bundle_max_age_hours":  6.0,
+    "bundle_uniformity":     0.75,  # 1.0 = all ten hold identical amounts
     # Inside this window the penalty is halved: a holder base takes hours to
     # spread, and two of the biggest winners were charged full price for it.
     "top_holder_grace_hours": 1.0,
