@@ -1850,6 +1850,52 @@ def test_wallet_clusters():
     check_true("forty-one costs much more", penalty(41, 23.0) < penalty(9, 4.0))
 
 
+def test_provider_outage():
+    """
+    A provider going down should cost one round of learning, not the scan.
+
+    DexScreener went down mid-run: every call waited twelve seconds, then
+    retried, and fifteen of those consumed most of an eighteen minute budget
+    to discover the same fact over and over. The run was cancelled before it
+    finished a third chain.
+    """
+    import chain_base
+    print("\nprovider outage")
+
+    class Dead:
+        status_code = 503
+        def json(self):
+            return {}
+
+    calls = {"n": 0}
+    real_get, real_retries = chain_base._session.get, config.HTTP_RETRIES
+    chain_base._host_health.clear()
+    chain_base.config.HTTP_RETRIES = 0
+    chain_base._session.get = lambda *a, **k: (
+        calls.__setitem__("n", calls["n"] + 1) or Dead())
+    try:
+        for _ in range(12):
+            chain_base.http_get("https://api.dexscreener.com/latest/dex/tokens/x")
+        check("a dead host stops being called",
+              calls["n"], config.HTTP_CIRCUIT_FAILS)
+
+        # One provider failing must not silence the others.
+        before = calls["n"]
+        chain_base.http_get("https://api.geckoterminal.com/api/v2/x")
+        check("other hosts are unaffected", calls["n"] - before, 1)
+
+        # And it recovers rather than staying dead for the process lifetime.
+        chain_base._host_health["api.dexscreener.com"] = [99, 0.0]
+        before = calls["n"]
+        chain_base.http_get("https://api.dexscreener.com/latest/dex/tokens/x")
+        check_true("the breaker reopens once the cooldown passes",
+                   calls["n"] > before)
+    finally:
+        chain_base._session.get = real_get
+        chain_base.config.HTTP_RETRIES = real_retries
+        chain_base._host_health.clear()
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -1958,6 +2004,7 @@ def main():
     test_evm_safety_recheck()
     test_bundled_distribution()
     test_wallet_clusters()
+    test_provider_outage()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

@@ -272,9 +272,59 @@ _GT_POOL_CACHE: dict = {}              # (network, ca) -> (ts, pool payload)
 _GT_POOL_TTL = 180
 
 
+# host -> (consecutive failures, when it goes back in service)
+_host_health: dict[str, list] = {}
+
+
+def _host_of(url: str) -> str:
+    try:
+        return url.split("/")[2]
+    except IndexError:
+        return url
+
+
+def _host_down(host: str) -> bool:
+    """
+    Whether a host is currently being skipped.
+
+    A provider outage should cost one round of learning, not the whole scan.
+    DexScreener went down mid-run and every call waited twelve seconds and
+    then retried — fifteen of those consumed most of an eighteen minute
+    budget to discover the same fact repeatedly.
+    """
+    state = _host_health.get(host)
+    if not state:
+        return False
+    fails, until = state
+    if fails < config.HTTP_CIRCUIT_FAILS:
+        return False
+    if time.time() >= until:
+        _host_health[host] = [0, 0.0]      # give it another chance
+        return False
+    return True
+
+
+def _note_failure(host: str):
+    state = _host_health.setdefault(host, [0, 0.0])
+    state[0] += 1
+    if state[0] == config.HTTP_CIRCUIT_FAILS:
+        state[1] = time.time() + config.HTTP_CIRCUIT_COOLDOWN
+        log.warning("%s failing repeatedly — skipping it for %ds",
+                    host, config.HTTP_CIRCUIT_COOLDOWN)
+
+
+def _note_success(host: str):
+    if host in _host_health:
+        _host_health[host] = [0, 0.0]
+
+
 def http_get(url: str, params: dict | None = None,
              timeout: int | None = None, retries: int | None = None):
     """GET with retry/backoff. Returns parsed JSON or None. Never raises."""
+    host = _host_of(url)
+    if _host_down(host):
+        return None
+
     timeout = timeout or config.HTTP_TIMEOUT
     retries = config.HTTP_RETRIES if retries is None else retries
     delay = 1.0
@@ -282,12 +332,14 @@ def http_get(url: str, params: dict | None = None,
         try:
             r = _session.get(url, params=params, timeout=timeout)
             if r.status_code == 200:
+                _note_success(host)
                 return r.json()
             if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
                 time.sleep(delay * (4 if r.status_code == 429 else 1))
                 delay *= config.HTTP_BACKOFF
                 continue
             log.warning("GET %s -> HTTP %s", url, r.status_code)
+            _note_failure(host)
             return None
         except Exception as e:
             if attempt < retries:
@@ -295,7 +347,9 @@ def http_get(url: str, params: dict | None = None,
                 delay *= config.HTTP_BACKOFF
                 continue
             log.warning("GET %s failed: %s", url, e)
+            _note_failure(host)
             return None
+    _note_failure(host)
     return None
 
 

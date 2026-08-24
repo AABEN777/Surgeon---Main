@@ -24,6 +24,10 @@ SUPABASE_URL        = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY        = os.getenv("SUPABASE_KEY", "")
 
 # ── HTTP ──────────────────────────────────────────────────────────
+# After this many consecutive failures a host is skipped for a while. An
+# outage should cost one round of learning, not the whole scan.
+HTTP_CIRCUIT_FAILS    = 4
+HTTP_CIRCUIT_COOLDOWN = 180
 HTTP_TIMEOUT   = 12
 HTTP_RETRIES   = 2
 HTTP_BACKOFF   = 1.5
