@@ -53,6 +53,7 @@ class ChainRun:
     evaluated: int = 0
     alerted: int = 0
     tracked_only: int = 0
+    send_failures: int = 0
     parked: int = 0
     revived: int = 0
     rejects: dict = field(default_factory=dict)
@@ -516,30 +517,38 @@ def scan_chain(chain: str, social_counts: dict[str, float],
             # only the higher bar reaches Telegram.
             if not ev.should_alert or alerts_muted:
                 run.tracked_only += 1
+                reason = ("muted:cooloff" if alerts_muted
+                          else f"below_floor:{ev.conviction.score}")
                 log.info("[%s] track %s (%s) %s %d/100",
                          chain, market.name, market.symbol,
                          ev.tier.tier, ev.conviction.score)
                 already[ca] = time.time()
-                store.record_signal(ev, adapter, sent_ok=False)
+                store.record_signal(ev, adapter, sent_ok=False,
+                                    send_error=reason)
                 continue
 
             log.info("[%s] SIGNAL %s (%s) %s %d/100 — %s",
                      chain, market.name, market.symbol,
                      ev.tier.tier, ev.conviction.score, ev.conviction.explain())
 
-            sent_ok = False
+            sent_ok, send_error = False, ""
             if dry_run:
                 run.alerted += 1
+                send_error = "dry_run"
             else:
                 res = alerts.send_signal(ev, adapter)
                 sent_ok = res.ok
                 if res.ok:
                     run.alerted += 1
                 else:
-                    log.warning("[%s] alert failed for %s: %s",
-                                chain, market.symbol, res.error)
+                    send_error = res.error or "unknown"
+                    run.send_failures += 1
+                    log.warning("[%s] SEND FAILED for %s (%d/100): %s",
+                                chain, market.symbol, ev.conviction.score,
+                                send_error)
             already[ca] = time.time()
-            store.record_signal(ev, adapter, sent_ok=sent_ok)
+            store.record_signal(ev, adapter, sent_ok=sent_ok,
+                                send_error=send_error)
 
         except Exception as e:
             log.warning("[%s] %s failed: %s", chain, ca[:12], e)
@@ -662,6 +671,9 @@ def main() -> int:
               f"found {called['called']:>3}  scored {called['evaluated']:>3}  "
               f"alerts {called['alerted']:>2}  "
               f"consensus {called['consensus']:>3}")
+    failed = sum(r.send_failures for r in runs)
+    if failed:
+        print(f"\n  ⚠️  {failed} alert(s) failed to send — see SEND FAILED above")
     print("-" * 62)
     total_alerts += called.get("alerted", 0)
     detail = f"  {total_alerts} alert(s)"

@@ -34,6 +34,9 @@ _session.headers.update({"User-Agent": config.USER_AGENT})
 # ca -> last alert timestamp
 _last_alert: dict[str, float] = {}
 
+# When the last message went out, so bursts are spaced rather than rejected.
+_last_send: float = 0.0
+
 
 def esc(v) -> str:
     """Escape anything a token author controls. Names are hostile input."""
@@ -266,7 +269,7 @@ class SendResult:
 
 
 def send(text: str, chat_id: Optional[str] = None,
-         disable_preview: bool = True, retries: int = 2) -> SendResult:
+         disable_preview: bool = True, retries: int = 4) -> SendResult:
     """
     Deliver one message. Returns a result rather than raising — a failed
     alert must never take the scanner down with it.
@@ -286,6 +289,15 @@ def send(text: str, chat_id: Optional[str] = None,
         "disable_web_page_preview": disable_preview,
     }
 
+    # Telegram allows roughly twenty messages a minute to one chat. A scan
+    # that finds nine signals across five chains can exceed that in seconds,
+    # and a discarded 429 looks identical to a token that was filtered — a
+    # 74-scoring signal that went on to peak +2,371% was lost this way.
+    global _last_send
+    gap = time.time() - _last_send
+    if gap < config.TELEGRAM_MIN_GAP:
+        time.sleep(config.TELEGRAM_MIN_GAP - gap)
+
     delay = 1.0
     for attempt in range(retries + 1):
         try:
@@ -293,13 +305,19 @@ def send(text: str, chat_id: Optional[str] = None,
                               json=payload, timeout=15)
             data = r.json()
             if data.get("ok"):
-                return SendResult(True, message_id=(data.get("result") or {}).get("message_id"))
+                _last_send = time.time()
+                return SendResult(True,
+                                  message_id=(data.get("result") or {}).get("message_id"))
 
             desc = data.get("description", "unknown error")
             # 429 carries retry_after; anything 4xx other than that is our bug
             if r.status_code == 429:
+                # Telegram states how long to wait. Honour it rather than
+                # burning an attempt and dropping the message.
                 wait = (data.get("parameters") or {}).get("retry_after", 5)
-                time.sleep(wait)
+                log.warning("telegram rate limited, waiting %ss", wait)
+                time.sleep(float(wait) + 0.5)
+                _last_send = time.time()
                 continue
             if 400 <= r.status_code < 500:
                 log.error("telegram rejected message: %s", desc)

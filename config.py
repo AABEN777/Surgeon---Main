@@ -15,6 +15,9 @@ GOPLUS_APP_KEY      = os.getenv("GOPLUS_APP_KEY", "")      # optional, raises ra
 GOPLUS_APP_SECRET   = os.getenv("GOPLUS_APP_SECRET", "")   # optional
 # Sending is opt-in. A missing or mistyped flag must fail closed, not open.
 LIVE_ALERTS         = os.getenv("SURGEON_LIVE", "").lower() == "true"
+# Seconds between messages. Telegram allows about twenty a minute to one
+# chat, and a scan finding nine signals can breach that in seconds.
+TELEGRAM_MIN_GAP    = 3.5
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "")
 SUPABASE_URL        = os.getenv("SUPABASE_URL", "")

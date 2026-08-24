@@ -125,6 +125,18 @@ def test_alerts():
     check_true("allowed once cooldown elapses",
                alerts.should_send(ca, cooldown_minutes=0))
 
+    # "alert_sent: false" covered two different situations — below the floor,
+    # and tried and failed. A 74-scoring token that peaked +2,371% was
+    # indistinguishable from one correctly filtered.
+    import inspect, store as store_mod
+    check_true("the store records why an alert did not arrive",
+               "send_error" in inspect.getsource(store_mod.Store.record_signal))
+    check_true("telegram sends are spaced",
+               config.TELEGRAM_MIN_GAP > 0)
+    send_src = inspect.getsource(alerts.send)
+    check_true("rate limits are honoured rather than dropped",
+               "retry_after" in send_src and "_last_send" in send_src)
+
     check("no credentials fails cleanly",
           alerts.send("x").ok if config.TELEGRAM_BOT_TOKEN else False, False)
 

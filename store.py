@@ -29,7 +29,8 @@ _session.headers.update({"User-Agent": config.USER_AGENT})
 # in-memory fallback
 _mem: dict[str, list[dict]] = {"signals": [], "mentions": [],
                                "positions": [], "watchlist": [],
-                               "meta_terms": []}
+                               "meta_terms": [], "token_buyers": [],
+                               "smart_wallets": []}
 
 
 class Store:
@@ -162,9 +163,15 @@ class Store:
         rows = rows if isinstance(rows, list) else [rows]
         if not self.live:
             store = _mem.setdefault(table, [])
+            # on_conflict may name several columns ("ca,chain"). Treating it
+            # as one field made every row match the first, so a second token
+            # overwrote the first instead of being added — offline runs would
+            # have reported a working cache that was silently losing entries.
+            keys = [k.strip() for k in str(on_conflict).split(",") if k.strip()]
             for row in rows:
-                match = next((r for r in store
-                              if r.get(on_conflict) == row.get(on_conflict)), None)
+                match = next(
+                    (r for r in store
+                     if all(r.get(k) == row.get(k) for k in keys)), None)
                 if match:
                     match.update(row)
                 else:
@@ -213,7 +220,8 @@ class Store:
         return out
 
     # ── signals ───────────────────────────────────────────────────
-    def record_signal(self, ev, adapter, sent_ok: bool) -> dict:
+    def record_signal(self, ev, adapter, sent_ok: bool,
+                      send_error: str = "") -> dict:
         m, s, c = ev.market, ev.safety, ev.conviction
         row = {
             "ca":              m.ca,
@@ -252,6 +260,11 @@ class Store:
             "from_watchlist":  getattr(ev, "from_watchlist", False),
             "alerted_at":      time.time(),
             "alert_sent":      sent_ok,
+            # Why an alert did not arrive. "alert_sent: false" covered two
+            # completely different situations — below the floor, and tried
+            # and failed — which made a 74-scoring token that peaked +2,371%
+            # indistinguishable from one that was correctly filtered.
+            "send_error":      (send_error or "")[:200],
             "outcome":         "pending",
         }
         self.insert("signals", row)
