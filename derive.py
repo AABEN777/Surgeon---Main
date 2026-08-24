@@ -140,6 +140,50 @@ def _solana_holders(ca: str, top: int = 50) -> list[str]:
     return out
 
 
+# Filled once per run, so a token fetched for the winners is not fetched
+# again for the control group.
+_run_cache: dict[str, list[str]] = {}
+_fetches_this_run = 0
+
+
+def reset_run_state():
+    """Clear per-run caches. Tests and repeated in-process runs need this."""
+    global _fetches_this_run
+    _run_cache.clear()
+    _fetches_this_run = 0
+
+
+def cached_buyers(chain: str, ca: str) -> list[str] | None:
+    """Early buyers already known for this token, from any previous run."""
+    key = f"{chain}:{ca}"
+    if key in _run_cache:
+        return _run_cache[key]
+    rows = store.select("token_buyers", {
+        "select": "wallets", "ca": f"eq.{ca}", "chain": f"eq.{chain}",
+        "limit": "1"})
+    if rows and rows[0].get("wallets"):
+        wallets = [w for w in str(rows[0]["wallets"]).split(",") if w]
+        _run_cache[key] = wallets
+        return wallets
+    return None
+
+
+def remember_buyers(chain: str, ca: str, wallets: list[str]):
+    """
+    Store a token's early buyers permanently.
+
+    Transfer history does not change — whoever bought first bought first.
+    Re-fetching the same tokens every run is what made this hit rate limits
+    on explorers that allow only a handful of calls before returning 429.
+    """
+    _run_cache[f"{chain}:{ca}"] = wallets
+    store.upsert("token_buyers", {
+        "ca": ca, "chain": chain,
+        "wallets": ",".join(wallets),
+        "fetched_at": time.time(),
+    }, on_conflict="ca,chain")
+
+
 def holders_of(chain: str, ca: str) -> list[str]:
     """
     Wallets that were early to this token.
@@ -149,12 +193,27 @@ def holders_of(chain: str, ca: str) -> list[str]:
     not expose transfers — so Solana results carry the survivorship bias this
     was built to remove, and are reported separately rather than mixed in.
     """
+    global _fetches_this_run
+    known = cached_buyers(chain, ca)
+    if known is not None:
+        return known
+
+    # Explorers allow only a handful of calls before rate limiting, so each
+    # run adds a bounded number of new tokens and the cache grows over days.
+    if _fetches_this_run >= config.SMART_MONEY_DERIVED["max_fetches_per_run"]:
+        return []
+
     try:
+        _fetches_this_run += 1
         if config.CHAINS[chain]["kind"] == "svm":
-            return _solana_holders(ca)
-        return _evm_early_buyers(chain, ca)
+            wallets = _solana_holders(ca)
+        else:
+            wallets = _evm_early_buyers(chain, ca)
+        if wallets:
+            remember_buyers(chain, ca, wallets)
+        return wallets
     except Exception as e:
-        log.warning("holders for %s on %s failed: %s", ca[:12], chain, e)
+        log.warning("buyers for %s on %s failed: %s", ca[:12], chain, e)
         return []
 
 
@@ -347,7 +406,9 @@ def main() -> int:
                                                      key=lambda x: -x[1])))
 
     measured = measure(sample)
-    log.info("%d distinct wallets held them", len(measured))
+    log.info("%d distinct wallets, %d tokens fetched this run "
+             "(%d already known)", len(measured), _fetches_this_run,
+             len(_run_cache) - _fetches_this_run)
 
     # The control group, matched by chain: what else did these wallets buy?
     need = config.SMART_MONEY_DERIVED["min_winners"]

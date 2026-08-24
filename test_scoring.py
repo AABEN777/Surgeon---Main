@@ -1415,8 +1415,99 @@ def test_derived_smart_money():
                '"sort": "asc"' in buyers_src)
     check_true("one request per token", buyers_src.count("http_get") == 1)
     check_true("burn addresses skipped", "BURN_ADDRESSES" in buyers_src)
+
+    # Explorers return 429 after a handful of calls. Transfer history never
+    # changes, so a token's early buyers are fetched once and kept — which is
+    # what turns this from 80 requests every run into a sample that grows.
+    import store as store_mod
+    store_mod._mem["token_buyers"] = []
+    derive._run_cache.clear()
+    derive._fetches_this_run = 0
+
+    calls = {"n": 0}
+    real = derive._evm_early_buyers
+    derive._evm_early_buyers = lambda chain, ca, want=40: (
+        calls.__setitem__("n", calls["n"] + 1) or ["0xa", "0xb", "0xc"])
+    try:
+        for _ in range(3):
+            derive.holders_of("base", "0xTOKEN")
+        check("one token costs one request", calls["n"], 1)
+        derive.holders_of("base", "0xOTHER")
+        check("a new token costs one more", calls["n"], 2)
+
+        derive._fetches_this_run = config.SMART_MONEY_DERIVED["max_fetches_per_run"]
+        spent = calls["n"]
+        derive.holders_of("base", "0xTHIRD")
+        check("the budget stops further fetching", calls["n"], spent)
+    finally:
+        derive._evm_early_buyers = real
+        store_mod._mem["token_buyers"] = []
+        derive._run_cache.clear()
+        derive._fetches_this_run = 0
     # Solana has no transfer endpoint, so it keeps the bias and says so.
     check_true("solana still uses holders", "_solana_holders" in holders_src)
+
+    # Transfer history never changes: whoever bought first bought first. The
+    # explorers return 429 after a handful of calls, so re-fetching the same
+    # tokens every run was the reason nothing completed.
+    import store as sm
+    sm._mem["token_buyers"] = []
+    derive.reset_run_state()
+    check("nothing cached to begin with",
+          derive.cached_buyers("base", "0xAAA"), None)
+    derive.remember_buyers("base", "0xAAA", ["0x111", "0x222"])
+    check("buyers are remembered",
+          derive.cached_buyers("base", "0xAAA"), ["0x111", "0x222"])
+    derive._run_cache.clear()
+    check_true("and survive a new run",
+               derive.cached_buyers("base", "0xAAA") == ["0x111", "0x222"])
+
+    derive.reset_run_state()
+    derive._fetches_this_run = config.SMART_MONEY_DERIVED["max_fetches_per_run"]
+    check("the fetch budget is enforced",
+          derive.holders_of("base", "0xUNSEEN"), [])
+    derive.reset_run_state()
+    sm._mem["token_buyers"] = []
+
+    # Explorers return 429 after a handful of calls, and transfer history
+    # never changes — so a token's early buyers are fetched once and kept.
+    # Re-fetching the same tokens every run is what made this unusable.
+    import store as store_mod
+    store_mod._mem["token_buyers"] = []
+    derive._run_cache.clear()
+    derive._fetches_this_run = 0
+    calls = []
+    real = derive._evm_early_buyers
+    derive._evm_early_buyers = lambda chain, ca, want=40: (
+        calls.append(ca) or [f"0x{ca.lower()}a", f"0x{ca.lower()}b"])
+    try:
+        for _ in range(3):
+            derive.holders_of("base", "TOK1")
+        derive.holders_of("base", "TOK2")
+        check("repeat lookups fetch once each", len(calls), 2)
+
+        derive._run_cache.clear()
+        derive._fetches_this_run = 0
+        before = len(calls)
+        recovered = derive.holders_of("base", "TOK1")
+        check("a later run fetches nothing", len(calls) - before, 0)
+        check("and recovers the right wallets", recovered,
+              ["0xtok1a", "0xtok1b"])
+
+        # A composite on_conflict ("ca,chain") must key on both columns, or a
+        # second token overwrites the first and the cache silently loses
+        # entries while appearing to work.
+        check("both tokens survive in the cache",
+              len(store_mod._mem["token_buyers"]), 2)
+
+        derive._fetches_this_run = config.SMART_MONEY_DERIVED["max_fetches_per_run"]
+        check("the per-run budget stops further fetches",
+              derive.holders_of("base", "TOK9"), [])
+    finally:
+        derive._evm_early_buyers = real
+        store_mod._mem["token_buyers"] = []
+        derive._run_cache.clear()
+        derive._fetches_this_run = 0
 
     store_mod._mem["smart_wallets"] = []
 

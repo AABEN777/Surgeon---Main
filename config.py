@@ -413,9 +413,13 @@ SMART_MONEY_DERIVED = {
     # nine winners and two hundred losers is buying everything, not choosing.
     "min_precision":     0.25,
     "max_promote":        15,
-    # One request per token now — the v1 endpoint returns oldest-first, so
-    # there is nothing to paginate through.
+    # One request per token — the v1 endpoint returns oldest-first, so there
+    # is nothing to paginate through.
     "transfer_pages":      1,
+    # New tokens fetched per run. Explorers return 429 after a handful of
+    # calls, and transfer history never changes, so results are cached
+    # permanently and the sample grows a little each day.
+    "max_fetches_per_run": 25,
     # A newly added wallet gets this long before being judged, so it is not
     # retired for missing winners that closed before it was tracked.
     "review_after_hours": 72,
