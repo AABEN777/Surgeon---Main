@@ -19,6 +19,7 @@ from typing import Optional
 
 import config
 from chain_base import (
+    as_list,
     ChainAdapter, SafetyReport, CreatorActivity,
     http_get, safe_float, safe_int,
     BURN_ADDRESSES, is_infrastructure_holder,
@@ -73,7 +74,8 @@ class EvmAdapter(ChainAdapter):
         if not data or data.get("code") != 1:
             return False
 
-        result = (data.get("result") or {}).get(ca_l)
+        raw = data.get("result")
+        result = raw.get(ca_l) if isinstance(raw, dict) else None
         if not result:
             return False
 
@@ -122,7 +124,7 @@ class EvmAdapter(ChainAdapter):
             rep.flags.append("unverified_contract")
 
         # -- holder distribution ----------------------------------
-        holders = result.get("holders")
+        holders = as_list(result.get("holders"))
         if holders:
             pcts = []
             skipped = 0
@@ -141,14 +143,10 @@ class EvmAdapter(ChainAdapter):
             if pcts:
                 rep.top_holder_pct = round(pcts[0], 2)
                 rep.top10_pct = round(sum(pcts[:10]), 2)
-                if rep.top_holder_pct > config.SAFETY["max_top_holder_pct"]:
-                    rep.hard_rejects.append(f"top_holder_{rep.top_holder_pct:.0f}pct")
-                if rep.top10_pct > config.SAFETY["max_top10_pct"]:
-                    rep.hard_rejects.append(f"top10_{rep.top10_pct:.0f}pct")
         rep.holder_count = safe_int(result.get("holder_count")) or None
 
         # -- LP lock ----------------------------------------------
-        lp_holders = result.get("lp_holders")
+        lp_holders = as_list(result.get("lp_holders"))
         if lp_holders:
             locked = 0.0
             top_unlocked = 0.0
@@ -227,10 +225,6 @@ class EvmAdapter(ChainAdapter):
         for f in ("top_holder_pct", "top10_pct"):
             if f in rep.unavailable:
                 rep.unavailable.remove(f)
-        if rep.top_holder_pct > config.SAFETY["max_top_holder_pct"]:
-            rep.hard_rejects.append(f"top_holder_{rep.top_holder_pct:.0f}pct")
-        if rep.top10_pct > config.SAFETY["max_top10_pct"]:
-            rep.hard_rejects.append(f"top10_{rep.top10_pct:.0f}pct")
 
     # ── CREATOR ACTIVITY ──────────────────────────────────────────
     def creator_activity(self, ca: str, creator: Optional[str] = None) -> CreatorActivity:
@@ -255,7 +249,7 @@ class EvmAdapter(ChainAdapter):
 
         url = f"{self.blockscout.rstrip('/')}/api/v2/tokens/{ca}/transfers"
         data = http_get(url, timeout=15)
-        items = (data or {}).get("items") or []
+        items = as_list((data or {}).get("items"))
         creator_l = creator.lower()
 
         sold = 0.0

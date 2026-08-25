@@ -366,6 +366,14 @@ class Evaluation:
             # void is all this needs to exclude.
             return (self.conviction.social_channels
                     >= config.VELOCITY_MIN_CHANNELS)
+        # 525 closed trades at 12.6% against a 22% baseline, average peak 8.
+        # Ninety-nine still reached the phone because a -12 penalty was not
+        # enough to clear the floors. Tracked and graded as before; it simply
+        # stops interrupting.
+        if (config.CONVICTION.get("block_weak_momentum")
+                and self.conviction.momentum in ("WEAK", "FAKE")):
+            return False
+
         floor = config.CONVICTION["min_to_alert_by_tier"].get(
             self.tier.tier, config.CONVICTION["min_to_alert"])
         return self.conviction.score >= floor

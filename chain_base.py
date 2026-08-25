@@ -189,6 +189,12 @@ class SafetyReport:
                 bits.append(f"LP {self.lp_locked_pct:.0f}% locked")
         elif "lp_locked_pct" in self.unavailable:
             bits.append("LP n/a")
+        # "LP 60% locked" does not say the other 40% sits in one wallet, and
+        # on EVM that is the number deciding whether a pool can vanish in one
+        # transaction. Stated always, not only when it trips a flag.
+        if (self.lp_top_unlocked_pct is not None
+                and self.lp_top_unlocked_pct >= 5.0):
+            bits.append(f"{self.lp_top_unlocked_pct:.0f}% pullable by one wallet")
         if self.risk_raw is not None:
             # RugCheck's raw score is built from risks it has detected, and
             # a token minutes old has almost nothing to detect — no holder
@@ -353,6 +359,24 @@ def http_get(url: str, params: dict | None = None,
     return None
 
 
+def as_list(v, dicts_only: bool = True) -> list:
+    """
+    A field from an API response, as something safe to iterate.
+
+    `(data.get("pairs") or [])` looks defensive and is not: a string is
+    truthy, so it survives the `or` and then iterates into characters, and
+    the first `.get()` raises. DexScreener returned exactly that shape during
+    yesterday's outage.
+
+    Checking the outer type is not enough either — a list containing None
+    passes it and fails on the first `.get()`, so entries that are not
+    dictionaries are dropped by default.
+    """
+    if not isinstance(v, list):
+        return []
+    return [x for x in v if isinstance(x, dict)] if dicts_only else v
+
+
 def safe_float(v, default=0.0) -> float:
     try:
         if v is None:
@@ -405,7 +429,7 @@ def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
         data = http_get(url, retries=3)
         if not isinstance(data, dict):
             continue
-        for pool in (data.get("data") or []):
+        for pool in as_list(data.get("data")):
             rel = ((pool.get("relationships") or {}).get("base_token") or {}).get("data") or {}
             token_id = rel.get("id") or ""
             # ids look like "base_0xabc..." / "solana_9xQ..."
@@ -481,7 +505,7 @@ def geckoterminal_market(ca: str, chain: str, network: str,
         _GT_THROTTLE.wait()
         data = http_get(f"{GT_BASE}/networks/{network}/tokens/{ca}/pools",
                         retries=2)
-        pools = (data or {}).get("data") or []
+        pools = as_list((data or {}).get("data"))
         if pools:
             pool = max(pools, key=lambda p: safe_float(
                 (p.get("attributes") or {}).get("reserve_in_usd")))
@@ -544,7 +568,8 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
     if not data:
         return TokenMarket(ca=ca, chain=chain, ok=False, error="dexscreener_unreachable")
 
-    pairs = [p for p in (data.get("pairs") or []) if p.get("chainId") == chain_id]
+    pairs = [p for p in as_list(data.get("pairs"))
+             if p.get("chainId") == chain_id]
     if not pairs:
         return TokenMarket(ca=ca, chain=chain, ok=False, error="no_pairs")
 
@@ -750,7 +775,7 @@ def dexscreener_markets(cas: list[str], chain: str,
 
         # Group every returned pair under its base token, per chain.
         by_token: dict[str, list[dict]] = {}
-        for pair in (data.get("pairs") or []):
+        for pair in as_list(data.get("pairs")):
             if pair.get("chainId") != chain_id:
                 continue
             addr = ((pair.get("baseToken") or {}).get("address") or "").lower()

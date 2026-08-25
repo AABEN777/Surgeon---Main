@@ -33,56 +33,66 @@ class RiskFlag:
 
 def _top_holder(safety, market=None) -> RiskFlag | None:
     """
-    A single wallet holding real size can exit into your bid.
+    The single largest wallet — the number King treats as mattering most.
 
-    Scaled by age as well as size. On a token twenty minutes old,
-    concentration is what an early runner looks like — Buying Power took -14
-    here and ran +3,128%, Caesar took -14 and ran +794%. A holder base takes
-    hours to spread, so charging full price for that in the first hour
-    penalises the defining feature of the winners.
+    Ideal under 8%, risky above 12%. The previous line was 3.5%, which is
+    tighter than the trenches use and tighter than the outcomes justify:
+    TOP_HOLDER-6 and -14 had the two highest average peaks of any component
+    in the table, at 68 and 67. Concentration was being charged against the
+    best-performing cohort.
     """
     pct = safety.top_holder_pct
     if pct is None or pct <= config.SCAM["top_holder_pct"]:
         return None
 
-    if pct >= 20:
-        points, severity = -22, "danger"
-    elif pct >= 10:
-        points, severity = -14, "warn"
+    if pct >= 30:
+        points, severity = -25, "danger"
+    elif pct >= config.SCAM["top_holder_max"]:
+        points, severity = -14, "danger"
     else:
         points, severity = -6, "warn"
 
     age = getattr(market, "age_hours", None) if market else None
     known = getattr(market, "age_known", False) if market else False
-    if known and age is not None and age < config.SCAM["top_holder_grace_hours"]:
-        # Halved, not waived: 40% in one wallet is a countdown at any age.
-        points = int(round(points / 2))
-        if severity == "warn":
-            return RiskFlag("TOP_HOLDER",
-                            f"{pct:.1f}% in one wallet, {age * 60:.0f}m old",
-                            points, severity)
+    if (known and age is not None
+            and age < config.SCAM["top_holder_grace_hours"]
+            and severity == "warn"):
+        # A holder base takes hours to spread; charging full price for that
+        # in the first hour penalises what every winner looked like.
+        return RiskFlag("TOP_HOLDER",
+                        f"{pct:.1f}% in one wallet, {age * 60:.0f}m old",
+                        points // 2, severity)
     return RiskFlag("TOP_HOLDER", f"{pct:.1f}% in one wallet", points, severity)
 
 
-def _top10(safety) -> RiskFlag | None:
+def _top10(safety, market=None) -> RiskFlag | None:
     """
-    What the ten largest wallets hold between them.
+    What the ten largest hold between them.
 
-    A single top holder is the number bundling is designed to defeat: split
-    the supply across enough wallets and no one of them looks large.
-    CyberPump showed a 0.5% top holder, read as CLEAN, and was dumped into
-    its own locked pool by the wallets holding the rest.
+    Ideal under 25%, with up to 35% tolerated while a token is very early —
+    distribution genuinely takes time, and every one of the fifteen biggest
+    winners was under two hours old when it signalled.
     """
     pct = safety.top10_pct
-    if pct is None or pct <= config.SCAM["top10_pct"]:
+    if pct is None:
         return None
+
+    age = getattr(market, "age_hours", None) if market else None
+    known = getattr(market, "age_known", False) if market else False
+    very_early = (known and age is not None
+                  and age < config.SCAM["top10_early_hours"])
+    line = (config.SCAM["top10_early_pct"] if very_early
+            else config.SCAM["top10_pct"])
+    if pct <= line:
+        return None
+
+    if pct >= 60:
+        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -28, "danger")
+    if pct >= 50:
+        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -22, "danger")
     if pct >= 40:
-        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -25, "danger")
-    if pct >= 25:
-        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -16, "danger")
-    if pct >= 15:
-        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -9)
-    return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -5)
+        return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -14, "danger")
+    return RiskFlag("TOP10", f"top 10 hold {pct:.0f}%", -8)
 
 
 def _bundled_distribution(safety, market=None) -> RiskFlag | None:
@@ -234,10 +244,17 @@ def _thin_holders(safety) -> RiskFlag | None:
 
 
 def _creator_heavy(safety) -> RiskFlag | None:
+    """Deployer holdings. Ideal under 5%, risky above 10%."""
     pct = safety.creator_holds_pct
     if pct is None or pct <= config.SCAM["creator_holds_pct"]:
         return None
-    return RiskFlag("CREATOR_HOLDS", f"deployer holds {pct:.1f}%", -16, "danger")
+    if pct >= 20:
+        return RiskFlag("CREATOR_HOLDS", f"deployer holds {pct:.1f}%",
+                        -25, "danger")
+    if pct >= config.SCAM["creator_holds_max"]:
+        return RiskFlag("CREATOR_HOLDS", f"deployer holds {pct:.1f}%",
+                        -16, "danger")
+    return RiskFlag("CREATOR_HOLDS", f"deployer holds {pct:.1f}%", -8)
 
 
 def _unverified_safety(safety) -> RiskFlag | None:
@@ -255,7 +272,7 @@ def _unverified_safety(safety) -> RiskFlag | None:
 
 CHECKS = (
     ("safety_market", _top_holder),
-    ("safety", _top10),
+    ("safety_market", _top10),
     ("safety_market", _bundled_distribution),
     ("safety", _wallet_cluster),
     ("market", _thin_volume),

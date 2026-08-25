@@ -43,7 +43,8 @@ log = logging.getLogger("surgeon.watch")
 # earlier, and King decides. Only a reading past the hard-reject line escalates
 # to WHALE_STOP, which does close the position.
 TERMINAL = {"STOP_LOSS", "TRAIL_STOP", "DEV_SOLD", "WHALE_STOP",
-            "VOLUME_FADE", "TIME_STOP", "MAX_HOLD", "LIQUIDITY_DRAIN"}
+            "VOLUME_FADE", "TIME_STOP", "MAX_HOLD", "LIQUIDITY_DRAIN",
+            "SAFETY_BLOCK"}
 
 
 @dataclass
@@ -154,11 +155,14 @@ def evaluate_position(row: dict, market, adapter, fired: set[str],
                 # This reading would have blocked the signal outright. Saying
                 # so and leaving the position open would be reporting a fact
                 # while ignoring it.
-                out.append(("WHALE_STOP",
+                # Its own label, not WHALE_STOP. Reusing that one made 45
+                # of 49 closures in a day come from this rule, and neither
+                # of us could tell which was doing the work.
+                out.append(("SAFETY_BLOCK",
                             f"holder data arrived — top holder {top:.1f}%, "
                             f"past the {config.SAFETY['max_top_holder_pct']:.0f}% "
                             f"line that would have blocked this signal"))
-            elif top >= config.SCAM["top_holder_pct"] * 3:
+            elif top >= config.SCAM["top_holder_pct"]:
                 out.append(("SAFETY_RECHECK",
                             f"holder data arrived — top holder {top:.1f}%"))
 

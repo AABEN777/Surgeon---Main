@@ -215,8 +215,10 @@ def thresholds_for(chain: str, tier: str) -> dict:
 
 # ── SAFETY GATES ──────────────────────────────────────────────────
 SAFETY = {
-    "max_top_holder_pct":   20.0,   # reject above
-    "max_top10_pct":        60.0,
+    # Concentration no longer hard-rejects. It is scored on the scale in
+    # SCAM below, because a threshold that blocks outright cannot express
+    # "acceptable if the token is very new and the volume is real" — which
+    # is the actual judgement.
     "min_lp_locked_pct":    80.0,   # graduated pools only
     # An LP reading of exactly zero is treated as unreadable rather than
     # unlocked when every other holder signal contradicts it.
@@ -238,6 +240,12 @@ SAFETY = {
     "reject_creator_rug_history": True,
     # SKYAI on BSC passed with 1 holder and the creator holding 100% of supply,
     # because top_holder_pct was unavailable and nothing else was checked.
+    # Hard rejects, restored after being lost in a rewrite. 20% for a single
+    # wallet is the figure that was in place. The top-ten line is set at 50%,
+    # matching where the trenches say serious traders stop looking — it sits
+    # far above King's caution range so the graded warnings do the work.
+    "max_top_holder_pct":   20.0,
+    "max_top10_pct":        50.0,
     "max_creator_holds_pct": 20.0,
     "min_holder_count":      10,
     "reject_unverified_contract_if_thin": True,   # unverified + <50 holders
@@ -272,29 +280,35 @@ CLUSTERS = {
 # the scanner, and a token collecting several of them falls below the alert
 # floor on arithmetic anyway.
 SCAM = {
-    # Flip to False to score exactly as before these were added. Nothing
-    # else changes — the checks are additive, not a rewrite.
+    # Flip to False to score exactly as before these were added.
     "enabled":            True,
-    "top_holder_pct":        3.5,   # single wallet above this is a warning
-    # What the ten largest hold between them. A single top holder is the
-    # number bundling is built to defeat.
-    "top10_pct":            10.0,
-    # Bundling shows up as a *low* top holder: supply split across two
-    # hundred wallets leaves nobody holding anything. Organic early
-    # distribution is a power law — someone always bought more.
-    "bundle_max_top1":       1.5,   # largest holder below this, on a young token
-    "bundle_max_age_hours":  6.0,
-    "bundle_uniformity":     0.75,  # 1.0 = all ten hold identical amounts
-    # Inside this window the penalty is halved: a holder base takes hours to
-    # spread, and two of the biggest winners were charged full price for it.
-    "top_holder_grace_hours": 1.0,
-    # Unlocked LP held by a single wallet. This is the rug vector that token
-    # distribution cannot see.
-    "lp_pullable_pct":      35.0,
-    "min_volume_to_mcap":    0.80,  # 24h volume under this share of cap
-    "bundled_pct":          15.0,   # supply held by launch-bundled wallets
+
+    # Concentration, set from what the trenches actually treat as safe rather
+    # than from my guesses. The previous lines were far tighter — top holder
+    # at 3.5%, creator at 2% — and the outcome data says they were wrong:
+    # risk:TOP_HOLDER-6 and -14 had average peaks of 68 and 67, the two
+    # highest of any component in the table. We were penalising the
+    # best-performing cohort.
+    "top_holder_pct":        8.0,    # ideal under 8%
+    "top_holder_max":       12.0,    # risky above 12%
+    "creator_holds_pct":     5.0,    # ideal under 5%
+    "creator_holds_max":    10.0,    # risky above 10%
+    "top10_pct":            25.0,    # ideal under 25%
+    "top10_early_pct":      35.0,    # up to 35% tolerated while very early
+    "top10_early_hours":     1.0,
+    "bundled_pct":          15.0,    # insider supply under 15%
+
+    "min_volume_to_mcap":    0.80,
     "min_holders":          50,
-    "creator_holds_pct":     2.0,
+    "lp_pullable_pct":      35.0,
+    "top_holder_grace_hours": 1.0,
+
+    # Bundling shows up as a *low* top holder: supply split across two
+    # hundred wallets leaves nobody holding anything.
+    "bundle_max_top1":       1.5,
+    "bundle_max_age_hours":  6.0,
+    "bundle_uniformity":     0.75,
+
     # One warning is survivable. Three severe ones together is a pattern.
     "max_danger_flags":      3,
 }
@@ -369,6 +383,12 @@ CONVICTION = {
     # The score measures how much a token resembles a fresh launch, not how
     # likely it is to run. Boosted tokens score badly because they are older
     # and calmer, which is exactly what makes them win.
+    # 525 closed trades at 12.6% against a 22% baseline, average peak 8 —
+    # the worst cohort in the system by a wide margin, and 99 of them still
+    # reached the phone. The -12 penalty was not enough to clear the floors.
+    # Still tracked, so the outcome data keeps building.
+    "block_weak_momentum": True,
+
     "min_to_alert_by_tier": {
         "boosted":     38,
         "first_moon":  52,
@@ -553,17 +573,26 @@ WATCH = {
     # Measured as the fraction of the gain surrendered, not drawdown from
     # peak price. 40% off a +45% peak is break-even; 40% off a +500% peak is
     # still a large win. The same number cannot mean both.
-    "trail_arm_pct":         25,   # peak gain needed to arm
-    "give_back_ratio":      0.65,  # surrender this much of the gain -> exit
-    "give_back_after_tp2":  0.35,  # tighter once TP2 is banked
+    # 219 exits: average peak 149%, average close 11%. The rule says exit at
+    # 65% of peak and it exits at 7% — price gaps straight past the threshold
+    # between five-minute polls, so the ratio was never the problem. It
+    # cannot be enforced at this granularity.
+    #
+    # Volume fade keeps 84% of peak across 253 exits because it fires on
+    # momentum dying, which happens before price collapses. So trailing arms
+    # earlier and gives back far less, and volume fade is loosened to
+    # intercept more positions before they ever reach it.
+    "trail_arm_pct":         15,   # peak gain needed to arm
+    "give_back_ratio":      0.35,  # surrender this much of the gain -> exit
+    "give_back_after_tp2":  0.25,  # tighter once TP2 is banked
     "time_stop_hours":      2,   # exit alert if still negative
     "time_exit_hours":      4,   # exit alert if still flat
     "max_hold_hours":       8,
     # Volume fade closed at +78% against a +101% peak; trailing closed at
     # -21% against a +95% peak, on the same average high. Momentum dies
     # before price does, so lean on the leading indicator.
-    "volume_fade_ratio":  0.45,
-    "volume_fade_min_pnl":  10,
+    "volume_fade_ratio":  0.60,
+    "volume_fade_min_pnl":   5,
     # Pool shrunk to this share of its size at signal. Fires before the pool
     # is empty, which is the only warning a sudden pull ever gives.
     "liquidity_drain_ratio": 0.55,
@@ -588,6 +617,10 @@ WATCH = {
     # A parked token that has failed the gates this many times is not going
     # to turn. Holding it costs a re-check slot a fresher token could use.
     "max_watchlist_checks":   12,
+    # Tiers a parked token may revive into. Revived first_moon closes at +4;
+    # revived second_moon at -36 and revived boosted at -39, on 182 alerts
+    # at a 16.2% win rate against first_moon's 27.3%.
+    "revive_tiers":        ("first_moon",),
     # A position cannot lose more than everything, and a reading above this
     # is a broken entry price rather than a moonshot. Seven such rows put
     # the average final PnL at 124 million percent.

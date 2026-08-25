@@ -25,7 +25,7 @@ import logging
 from collections import Counter, defaultdict
 
 import config
-from chain_base import http_get, safe_float, BURN_ADDRESSES
+from chain_base import http_get, safe_float, as_list, BURN_ADDRESSES
 
 log = logging.getLogger("surgeon.clusters")
 
@@ -56,7 +56,7 @@ def solana_clusters(report: dict) -> list[Cluster]:
     many separate hands were involved.
     """
     out = []
-    networks = report.get("insiderNetworks") or []
+    networks = as_list(report.get("insiderNetworks"))
     for net in networks:
         if not isinstance(net, dict):
             continue

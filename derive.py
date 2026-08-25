@@ -30,7 +30,8 @@ from collections import defaultdict
 
 import config
 import chains
-from chain_base import http_get, safe_float, is_solana_infrastructure
+from chain_base import (http_get, safe_float, as_list,
+                        is_solana_infrastructure)
 from store import store
 
 logging.basicConfig(
@@ -131,7 +132,7 @@ def _solana_holders(ca: str, top: int = 50) -> list[str]:
     from chain_base import solana_pool_accounts
     pools = solana_pool_accounts(data.get("markets"))
     out = []
-    for h in (data.get("topHolders") or [])[:top]:
+    for h in as_list(data.get("topHolders"))[:top]:
         if is_solana_infrastructure(h, pools):
             continue
         owner = h.get("owner") or h.get("address")

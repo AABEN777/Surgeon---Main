@@ -94,6 +94,9 @@ def _worth_parking(tier_result, market) -> bool:
     fails = tier_result.failures.get("first_moon") or []
     if not any(f.startswith("age") and "<" in f for f in fails):
         return False          # not too young — nothing to wait for
+    # Only park what could revive into a tier worth reviving into.
+    if not set(tier_result.failures) & set(config.WATCH["revive_tiers"]):
+        return False
     if market.sanity_issues:
         return False          # broken data does not heal
     if market.liquidity_usd < 1_000:
@@ -166,6 +169,17 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                     continue
 
                 tier = scoring.classify_tier(market, chain)
+                # Revivals sent 182 alerts at 16.2%, more than first_moon's
+                # 157 at 27.3%. Split by tier it is not uniform: revived
+                # first_moon closes at +4, the only positive cohort besides
+                # direct second_moon, while revived second_moon closes at -36
+                # and revived boosted at -39. The parking machinery earns its
+                # place on early launches and nowhere else.
+                if (tier.matched
+                        and tier.tier not in config.WATCH["revive_tiers"]):
+                    store.drop_from_watchlist(ca)
+                    outcomes["wrong_tier"] = outcomes.get("wrong_tier", 0) + 1
+                    continue
                 if not tier.matched:
                     if market.age_known and market.age_hours > 6:
                         store.drop_from_watchlist(ca)

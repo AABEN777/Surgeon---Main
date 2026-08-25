@@ -14,6 +14,7 @@ from typing import Optional
 import config
 import logging
 from chain_base import (
+    as_list,
     is_solana_infrastructure, solana_pool_accounts,
     ChainAdapter, SafetyReport, CreatorActivity,
     http_get, safe_float, safe_int,
@@ -94,7 +95,7 @@ class SolanaAdapter(ChainAdapter):
         # hardcoded list can catch them.
         pool_accounts = solana_pool_accounts(data.get("markets"))
 
-        holders = data.get("topHolders")
+        holders = as_list(data.get("topHolders"))
         if not holders:
             rep.unavailable.extend(["top_holder_pct", "top10_pct"])
         else:
