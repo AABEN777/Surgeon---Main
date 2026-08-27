@@ -5,6 +5,12 @@ name: Scan
 on:
   schedule:
     - cron: "7,22,37,52 * * * *"
+  # Triggered by an external scheduler. GitHub's own cron dropped 30 times
+  # in 90 days, and their docs say schedules may be delayed or dropped under
+  # load — so timing lives outside GitHub while the compute stays here.
+  repository_dispatch:
+    types: [run-scan]
+
   workflow_dispatch:
     inputs:
       chain:
