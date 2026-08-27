@@ -608,12 +608,17 @@ WATCH = {
     "whale_top_holder_pct":  30,
     "graduation_bc_pct":     60,
     "max_open_positions":    25,  # tracking cap
-    # Inherited from the autonomous version, where pausing after losses
-    # protected capital. Signal-only, it just goes quiet while King is the
-    # one deciding what to trade — and two losers at a ~20% win rate is an
-    # ordinary afternoon, not a reason to miss the next runner.
-    "cooloff_losses":         5,
-    "cooloff_minutes":       20,
+    # Removed. Inherited from the autonomous version, where pausing after
+    # losses protected capital that was actually being spent. Signal-only it
+    # only decides not to speak, and it silenced Titan at 67/100 — which went
+    # on to peak +1,890% — along with RWArt at 62/100.
+    #
+    # It also got worse as Surgeon got better: improving rug detection closed
+    # more positions as losses, which tripped the rule more often, until it
+    # was muting 35 qualified signals a day against 7 when it was last
+    # reviewed. Set either value to 0 to disable; both are 0 here.
+    "cooloff_losses":         0,
+    "cooloff_minutes":        0,
     # A parked token that has failed the gates this many times is not going
     # to turn. Holding it costs a re-check slot a fresher token could use.
     "max_watchlist_checks":   12,

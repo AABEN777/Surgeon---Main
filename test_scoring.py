@@ -1988,6 +1988,41 @@ def test_malformed_payloads():
     check("no adapter raises on any payload shape", failures, [])
 
 
+def test_cooloff_removed():
+    """
+    The cooloff silenced Titan at 67/100, which went on to peak +1,890%, and
+    RWArt at 62/100. Both cleared every floor.
+
+    It was inherited from the autonomous version, where pausing after losses
+    protected capital that was actually being spent. Signal-only it only
+    decides not to speak — and it got worse as Surgeon got better, because
+    improving rug detection closed more positions as losses, tripping the
+    rule more often, until it was muting 35 qualified signals a day.
+    """
+    import scan, store as store_mod, time as _t
+    print("\ncooloff")
+
+    check("disabled in config", config.WATCH["cooloff_losses"], 0)
+
+    store_mod._mem["signals"] = []
+    s = store_mod.Store(url="", key="")
+    now = _t.time()
+    s.insert("signals", [{"ca": f"l{i}", "chain": "solana", "outcome": "LOSS",
+                          "closed_at": now - 60, "alerted_at": now - 600,
+                          "final_pnl": -70} for i in range(5)])
+    blocked, _ = scan.portfolio_blocked()
+    check_true("consecutive losses no longer mute alerts", not blocked)
+
+    # The position cap stays: that one limits noise, not losses.
+    s.insert("signals", [{"ca": f"p{i}", "chain": "solana",
+                          "outcome": "pending", "alerted_at": now}
+                         for i in range(config.WATCH["max_open_positions"])])
+    blocked, why = scan.portfolio_blocked()
+    check_true("the position cap still applies", blocked and "tracking" in why)
+
+    store_mod._mem["signals"] = []
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2105,6 +2140,7 @@ def main():
     test_wallet_clusters()
     test_provider_outage()
     test_malformed_payloads()
+    test_cooloff_removed()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

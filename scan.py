@@ -359,6 +359,9 @@ def portfolio_blocked() -> tuple[bool, str]:
     if len(open_now) >= cap:
         return True, f"tracking {len(open_now)}/{cap} positions"
 
+    if not config.WATCH["cooloff_losses"] or not config.WATCH["cooloff_minutes"]:
+        return False, ""
+
     recent = store.closed_trades(limit=config.WATCH["cooloff_losses"])
     if len(recent) >= config.WATCH["cooloff_losses"]:
         losses = [t for t in recent if str(t.get("outcome", "")).upper() == "LOSS"]

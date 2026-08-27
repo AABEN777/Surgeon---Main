@@ -82,6 +82,22 @@ Both errors came from reading an average without asking what produced it —
 the trailing-versus-volume-fade comparison, and the boosted verdict. In each
 case the mean concealed the mechanism. Worth watching for.
 
+## Cooloff removed
+
+Silenced Titan at 67/100 — which peaked +1,890% — and RWArt at 62/100. Both
+cleared every floor.
+
+It was inherited from the autonomous version, where pausing after losses
+protected capital that was being spent. Signal-only it only decides not to
+speak, while King decides what to trade.
+
+And it got worse as Surgeon got better: improving rug detection closed more
+positions as losses, which tripped the rule more often, until it was muting
+35 qualified signals a day against 7 when it was last reviewed. A safety
+improvement made a separate rule hostile — worth watching for elsewhere.
+
+The position cap stays. That one limits noise rather than reacting to losses.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,
