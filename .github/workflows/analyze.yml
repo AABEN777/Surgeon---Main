@@ -18,8 +18,13 @@ on:
   # Answers addresses sent to the bot. Scheduled jobs cannot hold a socket
   # open, so this polls instead of listening — worst case a reply takes as
   # long as the gap between runs.
+  #
+  # Every fifteen minutes rather than five: Watch and Analyze together were
+  # 576 scheduled runs a day, and GitHub delays or drops schedules under
+  # load. A slower reply to a pasted address costs nothing; a Watch run that
+  # never fires costs a position.
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "4,19,34,49 * * * *"
 
 concurrency:
   group: surgeon-analyze
