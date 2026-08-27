@@ -79,3 +79,11 @@ own winners, rather than trusting a hand-researched list.
 `CHANGES.md` records every adjustment, what it was meant to fix, and what
 evidence would show it worked or should be removed — written before the
 outcomes arrived, so the test cannot be moved afterwards.
+
+## Schedule resync
+
+GitHub occasionally stops firing scheduled workflows while manual runs keep
+working. Their fix is to push any commit to the default branch, which
+resyncs the schedules.
+
+Last resync: 2026-08-27 11:23 UTC
