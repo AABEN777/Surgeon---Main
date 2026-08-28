@@ -65,6 +65,9 @@ jobs:
           python3 analyze.py "${{ inputs.address }}" \
             ${{ inputs.send && '--send' || '' }}
 
+      # Both the cron and the external scheduler should poll. Checking only
+      # for 'schedule' meant a repository_dispatch ran neither step and the
+      # job did nothing at all.
       - name: Answer addresses sent to the bot
-        if: github.event_name == 'schedule'
+        if: github.event_name != 'workflow_dispatch'
         run: python3 analyze.py --poll

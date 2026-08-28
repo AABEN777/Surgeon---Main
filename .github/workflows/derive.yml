@@ -55,9 +55,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Dry run unless a person explicitly asks otherwise. inputs only exist
+      # on workflow_dispatch, so a scheduled or externally triggered run
+      # would otherwise have started promoting wallets into smart_wallets
+      # without anyone having looked at them.
       - name: Derive smart money
         run: |
           python3 derive.py \
             --limit ${{ inputs.limit || '60' }} \
             --min-peak ${{ inputs.min_peak || '100' }} \
-            ${{ inputs.dry_run && '--dry-run' || '' }}
+            ${{ github.event_name == 'workflow_dispatch'
+                && (inputs.dry_run && '--dry-run' || '')
+                || '--dry-run' }}
