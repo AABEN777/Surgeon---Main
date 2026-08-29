@@ -129,7 +129,13 @@ def _bundled_distribution(safety, market=None) -> RiskFlag | None:
             return None      # still a power law, just a small one
         detail += f", top 10 all near {top1:.2f}%"
 
-    return RiskFlag("EVEN_SPLIT", detail, -18, "danger")
+    # Measured on King's own 3,275 closed trades: even-split tokens win
+    # 40.5% against a 28.3% baseline and rug 32.4% against 19.7%. Both
+    # confidence intervals clear the baseline, so this is genuinely higher
+    # variance rather than simply bad — and -18 removed it from alerting
+    # entirely, taking the wins along with the rugs. Named loudly, charged
+    # lightly, so King sees it and decides.
+    return RiskFlag("EVEN_SPLIT", detail, -6, "warn")
 
 
 def _wallet_cluster(safety) -> RiskFlag | None:
@@ -148,13 +154,44 @@ def _wallet_cluster(safety) -> RiskFlag | None:
     if pct > 0:
         detail += f", {pct:.0f}% of supply"
 
+    # 27 closed trades so far: 37.0% win [21.5-55.8] and 22.2% rug
+    # [10.6-40.8]. Both intervals span the baseline, so nothing is proven in
+    # either direction and the earlier penalties of -10 to -28 were my
+    # judgement, not a measurement. Charged lightly until the sample says
+    # otherwise; the flag still shows in the alert.
     severe = (n >= config.CLUSTERS["danger_wallets"]
               or pct >= config.CLUSTERS["danger_supply_pct"])
     if severe:
-        return RiskFlag("CLUSTER", detail, -28, "danger")
+        return RiskFlag("CLUSTER", detail, -12, "danger")
     if n >= config.CLUSTERS["min_wallets"] * 2:
-        return RiskFlag("CLUSTER", detail, -18, "danger")
-    return RiskFlag("CLUSTER", detail, -10)
+        return RiskFlag("CLUSTER", detail, -6)
+    return RiskFlag("CLUSTER", detail, -3)
+
+
+def _venue(market) -> RiskFlag | None:
+    """
+    Where the token trades.
+
+    Measured against King's own closed trades rather than borrowed: pons-v2
+    rugged 87.9% of the time across 58 signals and won 5.2%, with a 95%
+    interval of 77-94% rug and 1.8-14% win. Nothing else in the data comes
+    close to that.
+
+    Venues sitting on the baseline are deliberately absent — uniswap and
+    pumpswap between them account for 2,051 trades and neither differs from
+    the population.
+    """
+    dex = (getattr(market, "dex", "") or "").lower()
+    rule = config.VENUES.get(dex)
+    if not rule:
+        return None
+    if rule.get("block"):
+        return RiskFlag("BAD_VENUE", f"{dex} rugs most of what it lists",
+                        -40, "danger")
+    points = rule.get("conviction", 0)
+    if points >= 0:
+        return None                      # bonuses are applied in scoring
+    return RiskFlag("VENUE", f"{dex} rugs well above average", points, "warn")
 
 
 def _thin_volume(market) -> RiskFlag | None:
@@ -275,6 +312,7 @@ CHECKS = (
     ("safety_market", _top10),
     ("safety_market", _bundled_distribution),
     ("safety", _wallet_cluster),
+    ("market", _venue),
     ("market", _thin_volume),
     ("safety", _bundled),
     ("safety", _lock_expiring),

@@ -127,7 +127,11 @@ THRESHOLDS = {
     # launched, dipped and is only now turning. Turnover stays raised, since
     # it measures real activity rather than a price path.
     "first_moon": {
-        "min_liquidity":   6_000,
+        # Under $10k rugs at 51.2% across 123 closed trades — the one part of
+        # the published liquidity research that replicated on our own data.
+        # The graded tiers above it did not: $100k+ rugged at 28.3% here
+        # against the 0.25% claimed, so depth is a floor and nothing more.
+        "min_liquidity":  10_000,
         "min_fdv":         5_000,
         "max_fdv":       150_000,
         "min_age_hours":     0.17,   # 10min — past the instant-rug window
@@ -189,12 +193,20 @@ THRESHOLDS = {
 # FDV — invisible to Solana-calibrated floors.
 CHAIN_THRESHOLD_OVERRIDES = {
     "robinhood": {
-        "first_moon": {"min_liquidity": 3_000, "min_volume_1h": 1_500},
-        "boosted":    {"min_liquidity": 5_000, "min_volume_1h": 2_000},
+        # Was $3k and $5k, on the reasoning that Robinhood's pools are
+        # thinner. King's own trades disagree: the $5k-10k band rugged 56.7%
+        # across 97 trades with a 16.5% win rate and produced one runner,
+        # against 13.9% rug and 41 runners above $20k. Under $5k is only 13
+        # trades — too few to defend a floor on, so it moves too.
+        "first_moon": {"min_liquidity": 10_000, "min_volume_1h": 1_500},
+        "boosted":    {"min_liquidity": 10_000, "min_volume_1h": 2_000},
     },
     "monad": {
-        "first_moon": {"min_liquidity": 3_000, "min_volume_1h": 1_500},
-        "boosted":    {"min_liquidity": 5_000, "min_volume_1h": 2_000},
+        # Monad has produced no closed trades at all, so its floors were
+        # never tested. Matched to Robinhood rather than left at an
+        # unexamined $3k.
+        "first_moon": {"min_liquidity": 10_000, "min_volume_1h": 1_500},
+        "boosted":    {"min_liquidity": 10_000, "min_volume_1h": 2_000},
     },
     # 46 trades, 13% win rate, average peak +4% — Base signals barely go
     # green at all. Raised rather than disabled: the chain is not dead, our
@@ -261,6 +273,28 @@ SAFETY = {
     # and ran +410%; muting would have silenced it. The penalty ranks it, the
     # alert says so plainly, and King decides.
     "unverified_policy":    "flag",
+}
+
+# ── VENUE ─────────────────────────────────────────────────────────
+# Where a token trades, measured against King's own 3,174 closed trades
+# rather than borrowed from a study. Baseline is 28.3% win / 19.7% rug.
+#
+# Only effects whose 95% confidence interval clears the baseline appear
+# here — pons-v2 rugs between 77% and 94% of the time and wins between 1.8%
+# and 14%, so 58 trades is enough. uniswap and pumpswap sit on the baseline
+# on 1,459 and 592 trades and are deliberately absent.
+VENUES = {
+    # blocked outright: 5.2% win, 87.9% rug across 58 trades
+    "pons-v2":              {"block": True},
+
+    # rug rates two or more times the baseline
+    "uniswap-v3-robinhood": {"conviction": -18},   # 60.7% rug, n=28
+    "pancakeswap_v2":       {"conviction": -18},   # 44.0% rug, n=125
+    "pancakeswap":          {"conviction": -18},   # 39.5% rug, n=390
+
+    # win rates whose lower bound sits above the baseline
+    "uniswap-v4-base":      {"conviction":  +6},   # 49.7% win, n=322
+    "uniswap-v4-robinhood": {"conviction":  +6},   # 39.6% win, n=164
 }
 
 # ── WALLET CLUSTERS ───────────────────────────────────────────────

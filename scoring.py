@@ -298,6 +298,13 @@ def conviction_score(m: TokenMarket,
             c.meta_term = term
             c.add(f"meta:{term}", mpts)
 
+    # Venue. Only bonuses here; penalties arrive as risk flags so they show
+    # in the alert. uniswap-v4-base wins 49.7% across 322 of King's own
+    # trades with a lower bound of 44.3%, clear of the 28.3% baseline.
+    venue = config.VENUES.get((m.dex or "").lower())
+    if venue and venue.get("conviction", 0) > 0:
+        c.add(f"venue:{m.dex}", venue["conviction"])
+
     c.add(f"session:{c.session}", config.MARKET_HOURS_ADJUST[c.session]["conviction"])
     c.add(f"macro:{macro}", C["macro"].get(macro, 0))
 
@@ -406,6 +413,13 @@ def evaluate(m: TokenMarket, safety: SafetyReport, chain: str,
 
     if not m.ok:
         ev.rejected_by, ev.reject_detail = "market_data", m.error or "unavailable"
+        return ev
+
+    # A venue that rugs 88% of what it lists is not a scoring question.
+    # pons-v2: 58 trades, 5.2% win, 87.9% rug, interval 77-94%.
+    if config.VENUES.get((m.dex or "").lower(), {}).get("block"):
+        ev.rejected_by = "venue"
+        ev.reject_detail = f"{m.dex} rugs most of what it lists"
         return ev
 
     if safety.hard_rejects:

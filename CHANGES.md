@@ -98,6 +98,45 @@ improvement made a separate rule hostile — worth watching for elsewhere.
 
 The position cap stays. That one limits noise rather than reacting to losses.
 
+## Research checked against our own data
+
+Three claims from a published Solana dataset, tested against King's 3,275
+closed trades before building anything.
+
+**Did not replicate — graded liquidity depth.** The study reported $100k+
+liquidity dumping 0.25% of the time, a 308x moon:dump ratio, and called it
+the strongest signal it measured. Here $100k+ rugged **28.3%** across 191
+trades — a hundred times worse — and the relationship is not monotonic:
+$10k-20k beat $20k-50k on win rate. I had this queued as the top-priority
+build and it would have done nothing.
+
+What did replicate is the floor: under $10k rugs at 51.2%. first_moon's
+minimum moved from $6k to $10k. No graded scoring above it.
+
+**Replicated, and found our own version — venue.** The study named Meteora
+DBC at a 91.7% dump rate. We have no Meteora exposure, but the same query
+found **pons-v2: 58 trades, 5.2% win, 87.9% rug**, with a 95% interval of
+77-94% rug and 1.8-14% win. Blocked outright. pancakeswap, pancakeswap_v2
+and uniswap-v3-robinhood all rug at twice baseline and take -18.
+uniswap-v4-base (49.7% win, n=322) and uniswap-v4-robinhood (39.6%, n=164)
+earn +6. uniswap and pumpswap sit exactly on the baseline across 2,051
+trades and are deliberately absent.
+
+**Replicated against us — the bundler paradox.** The study found tokens with
+*zero* bundlers had the highest dump rate. Our data agrees in direction:
+EVEN_SPLIT wins **40.5%** against a 28.3% baseline, and CLUSTER wins 37.0%.
+Both were being charged -18 and -28, which removed our best-performing
+cohort from alerting.
+
+EVEN_SPLIT also rugs more (32.4% vs 19.7%) and both intervals clear the
+baseline, so it is genuinely higher variance rather than simply good.
+Reduced to -6 and named loudly. CLUSTER at n=27 is not significant in either
+direction; reduced to -3/-6/-12 until the sample says otherwise.
+
+Every threshold above was set from a Wilson interval rather than a point
+estimate, so an effect has to survive its own uncertainty before it changes
+anything.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

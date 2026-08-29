@@ -236,7 +236,13 @@ def test_tiers():
     print("\ntier gates")
     cases = [
         # name, chain, liq, fdv, vol, chg1h, chg5m, age, should_match
-        ("REDDIT rh",     "robinhood", 7833,  8115,      12853,  321,    6.6,    0.2, True),
+        #
+        # REDDIT is real Robinhood data at $7,833 liquidity — squarely in the
+        # band that rugged 56.7% across 97 of King's trades, with a 16.5%
+        # win rate and one runner. Robinhood's floor moved from $3k to $10k
+        # because of that, so this token is now correctly rejected. Kept as a
+        # case rather than edited, because it documents the change.
+        ("REDDIT rh",     "robinhood", 7833,  8115,      12853,  321,    6.6,    0.2, False),
         ("FomoMining rh", "robinhood", 20848, 19153,     34075,  227,   -3.3,    0.2, True),
         ("Korea Robot",   "solana",    70170, 70879,     12573,  46,     46,     0.2, True),
         ("mid runner",    "solana",    45000, 190000,    210000, 85,     12,     1.5, True),
@@ -1295,12 +1301,18 @@ def test_winner_recovery():
     check("unverified flags rather than mutes",
           config.SAFETY["unverified_policy"], "flag")
 
+    # Venue held neutral so this tests unverified handling alone. The real
+    # 央视抽象吉祥物 traded on pancakeswap, which now carries -18 because it
+    # rugs 39.5% across 390 of King's trades — so that specific token would
+    # now be silenced by its venue rather than by its safety status. That is
+    # a deliberate, separate trade-off: pancakeswap still wins 21.5%, so the
+    # penalty does cost some winners.
     winner = TokenMarket(ca="u", chain="bsc", name="央视抽象吉祥物",
                          symbol="周一来", liquidity_usd=35000, fdv=77899,
                          market_cap=77899, volume_24h=200000,
                          volume_1h=90000, volume_5m=7000, change_5m=12,
                          change_1h=140, buys_5m=70, sells_5m=30,
-                         age_hours=0.65, age_known=True, dex="pancakeswap")
+                         age_hours=0.65, age_known=True, dex="uniswap")
     ev = scoring.evaluate(winner, SafetyReport(ca="u", chain="bsc"), "bsc")
     check_true("the unverified winner reaches the phone", ev.should_alert)
     # Conviction charges UNVERIFIED; the risk flag names it without billing
@@ -2110,6 +2122,126 @@ def test_alert_floors_aligned():
                min(floors.values()) > config.CONVICTION["min_to_track"])
 
 
+def test_venue_effects():
+    """
+    Where a token trades, measured on King's own 3,275 closed trades rather
+    than borrowed from a study. Baseline 28.3% win / 19.7% rug.
+
+    Only effects whose 95% interval clears the baseline are acted on:
+
+        pons-v2               58 trades   5.2% win  87.9% rug  [77-94]
+        pancakeswap          390 trades  21.5% win  39.5% rug  [34.8-44.4]
+        pancakeswap_v2       125 trades  15.2% win  44.0% rug  [35.6-52.8]
+        uniswap-v4-base      322 trades  49.7% win  [44.3-55.1]
+        uniswap-v4-robinhood 164 trades  39.6% win  [32.5-47.3]
+
+    uniswap and pumpswap account for 2,051 trades between them and neither
+    differs from the population, so both are deliberately absent.
+    """
+    print("\nvenue effects")
+
+    def ev(dex):
+        m = TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                        liquidity_usd=40000, fdv=90000, market_cap=90000,
+                        volume_24h=200000, volume_1h=90000, volume_5m=6000,
+                        change_5m=6, change_1h=70, buys_5m=60, sells_5m=20,
+                        age_hours=0.6, age_known=True, dex=dex)
+        s = SafetyReport(ca="x", chain="base", sources=["goplus"],
+                         top_holder_pct=3.0, holder_count=600,
+                         lp_locked_pct=100.0, creator_holds_pct=0.1,
+                         honeypot=False)
+        return scoring.evaluate(m, s, "base")
+
+    dead = ev("pons-v2")
+    check("a venue that rugs 88% of listings is rejected",
+          dead.rejected_by, "venue")
+
+    neutral = ev("uniswap").conviction.score
+    check_true("a venue on the baseline scores neutrally",
+               not any(l.startswith("venue:")
+                       for l, _ in ev("uniswap").conviction.components))
+    check_true("pumpswap is also neutral",
+               ev("pumpswap").conviction.score == neutral)
+
+    check_true("a venue that wins scores higher",
+               ev("uniswap-v4-base").conviction.score > neutral)
+    check_true("and robinhood v4 too",
+               ev("uniswap-v4-robinhood").conviction.score > neutral)
+    check_true("a venue that rugs scores lower",
+               ev("pancakeswap").conviction.score < neutral)
+
+    # Penalties arrive as risk flags so they appear in the alert rather than
+    # silently subtracting.
+    import risk
+    market = TokenMarket(ca="x", chain="bsc", name="T", symbol="T",
+                         liquidity_usd=40000, fdv=90000, age_hours=1.0,
+                         age_known=True, dex="pancakeswap")
+    flags = risk.assess(market, SafetyReport(ca="x", chain="bsc"))
+    check_true("and the alert says which venue",
+               any(f.code == "VENUE" for f in flags))
+
+
+def test_liquidity_floor_not_tiers():
+    """
+    The published research claimed $100k+ liquidity dumps 0.25% of the time,
+    a 308x moon:dump ratio, and called it the strongest signal in its data.
+
+    On King's own trades it does not replicate: $100k+ rugged 28.3% across
+    191 trades, a hundred times worse than claimed, and the relationship is
+    not even monotonic — $10k-20k beat $20k-50k on win rate.
+
+    What did replicate is the floor. Under $10k rugs at 51.2%.
+    """
+    print("\nliquidity floor")
+    for tier in ("first_moon", "second_moon", "boosted"):
+        check_true(f"{tier} floor at or above $10k",
+                   config.THRESHOLDS[tier]["min_liquidity"] >= 10_000)
+    # No graded scoring: depth above the floor predicted nothing here.
+    liq = config.CONVICTION["liquidity"]
+    check_true("liquidity scoring stays a floor, not a gradient",
+               max(v for _, v in liq) <= 10)
+
+
+def test_thin_liquidity_band():
+    """
+    Robinhood's floor was $3k on first_moon and $5k on boosted, on the
+    reasoning that its pools are thinner than other chains'.
+
+    King's own trades disagreed:
+
+        $20k+       1,165 trades   25.8% win   13.9% rug   41 runners
+        $10k-20k      173 trades   24.3% win   28.9% rug    9 runners
+        $5k-10k        97 trades   16.5% win   56.7% rug    1 runner
+        under $5k      13 trades   23.1% win   30.8% rug    1 runner
+
+    The $5k-10k band is the hole. Under $5k looks survivable but is 13
+    trades, which is noise, so it moved with the rest.
+    """
+    print("\nthin liquidity band")
+
+    def qualifies(liq, chain="robinhood"):
+        m = TokenMarket(ca="x", chain=chain, name="T", symbol="T",
+                        liquidity_usd=liq, fdv=60000, market_cap=60000,
+                        volume_24h=40000, volume_1h=9000, volume_5m=900,
+                        change_5m=4, change_1h=60, buys_5m=25, sells_5m=10,
+                        age_hours=0.5, age_known=True,
+                        dex="uniswap-v4-robinhood")
+        return scoring.classify_tier(m, chain).matched
+
+    check_true("the 56.7% rug band is closed", not qualifies(7_000))
+    check_true("and below it too", not qualifies(4_000))
+    check_true("but $12k still qualifies", qualifies(12_000))
+    check_true("and $25k certainly does", qualifies(25_000))
+
+    # Monad has produced no closed trades, so its floors were never tested.
+    # Matched to Robinhood rather than left unexamined.
+    for chain in ("robinhood", "monad"):
+        ov = config.CHAIN_THRESHOLD_OVERRIDES.get(chain, {})
+        for tier in ("first_moon", "boosted"):
+            floor = ov.get(tier, {}).get("min_liquidity", 0)
+            check_true(f"{chain}/{tier} floor at $10k", floor >= 10_000)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2230,6 +2362,9 @@ def main():
     test_cooloff_removed()
     test_watchdog()
     test_alert_floors_aligned()
+    test_venue_effects()
+    test_liquidity_floor_not_tiers()
+    test_thin_liquidity_band()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
