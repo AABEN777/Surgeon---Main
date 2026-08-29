@@ -1,0 +1,52 @@
+name: Alive
+
+# Speaks only when something is wrong. Two outages went unnoticed for hours
+# because no alerts looks exactly like a quiet market — and the daily brief
+# runs on the same scheduler, so when that fails the thing that would have
+# told you fails with it.
+#
+# Deliberately on its own trigger and its own cron-job.org entry, so it can
+# still report when everything else has stopped.
+on:
+  schedule:
+    - cron: "11,41 * * * *"
+  repository_dispatch:
+    types: [run-alive]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Send even when healthy"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: surgeon-alive
+  cancel-in-progress: true
+
+jobs:
+  alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.SURGEON_ALERTS_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.SURGEON_ALERTS_CHAT_ID }}
+      SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
+      PYTHONUNBUFFERED:   "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check Surgeon is alive
+        run: |
+          python3 alive.py --send \
+            ${{ inputs.force && '--force' || '' }}
