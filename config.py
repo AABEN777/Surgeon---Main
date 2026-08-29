@@ -389,10 +389,15 @@ CONVICTION = {
     # Still tracked, so the outcome data keeps building.
     "block_weak_momentum": True,
 
+    # Aligned to where outcomes actually split. Across 787 closed trades over
+    # two days the 30-39 band won 32.4% and 40-49 won 31.4%, while 50-59 won
+    # 42.1% and everything above held at 41-42%. That is a ten point step at
+    # 50, not the flat plateau the score used to show — so every tier sits
+    # there rather than at three different guesses.
     "min_to_alert_by_tier": {
-        "boosted":     38,
-        "first_moon":  52,
-        "second_moon": 48,
+        "boosted":     50,
+        "first_moon":  50,
+        "second_moon": 50,
     },
     # Channel calls are not gated on this score at all. Conviction is
     # calibrated for fresh launches — it docks a 28h-old token for being old
@@ -450,6 +455,17 @@ META = {
     "min_tokens_category": 6,    # categories aggregate, so need more
     "saturate_at":       8,      # strength 1.0 at this many
     "max_points":        12,     # tops up a signal, never carries it
+}
+
+# ── WATCHDOG ──────────────────────────────────────────────────────
+# Silence reads the same whether Surgeon is working or dead. Two outages
+# went unnoticed for hours because no alerts looks exactly like a quiet
+# market, and the daily brief runs on the same scheduler — so when that
+# fails, the thing that would have told you also fails.
+WATCHDOG = {
+    "quiet_minutes":       75,   # no signal recorded for this long
+    "no_scan_minutes":     45,   # no scan has run at all
+    "stale_positions":     90,   # open positions not checked in this long
 }
 
 # ── DERIVED SMART MONEY ───────────────────────────────────────────

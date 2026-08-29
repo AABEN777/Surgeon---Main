@@ -1197,11 +1197,15 @@ def test_per_tier_alert_floors():
     lower by construction, while winning 32.1% against first_moon's 17.9%.
     """
     print("\nper-tier alert floors")
+    # Per-tier floors existed because a single floor at 60 muted boosted
+    # entirely. With outcomes now showing a clean step at 50 — 31-32% below
+    # it, 41-42% above, on 787 trades — the tiers no longer need separate
+    # numbers, and three guesses became one measurement.
     floors = config.CONVICTION["min_to_alert_by_tier"]
-    check_true("boosted has the lowest bar",
-               floors["boosted"] < floors["second_moon"] <= floors["first_moon"])
-    check_true("boosted's bar sits under its average score of 43",
-               floors["boosted"] < 43)
+    check_true("boosted is no longer muted",
+               floors["boosted"] <= 50)
+    check_true("no tier is held to a higher bar than another",
+               len(set(floors.values())) == 1)
     check_true("the default is below the old single floor of 60",
                config.CONVICTION["min_to_alert"] < 60)
 
@@ -2023,6 +2027,89 @@ def test_cooloff_removed():
     store_mod._mem["signals"] = []
 
 
+def test_watchdog():
+    """
+    Silence reads the same whether Surgeon is working or dead. Two outages
+    went unnoticed for hours because no alerts looks exactly like a quiet
+    market — and the daily brief runs on the same scheduler, so when that
+    fails the thing that would have told you fails with it.
+    """
+    import alive, store as store_mod, time as _t
+    print("\nwatchdog")
+
+    now = _t.time()
+    real_select = store_mod.store.select
+    real_open = store_mod.store.open_positions
+    real_live = store_mod.store.live
+
+    def stub(signals, positions=(), live=True):
+        store_mod.store.live = live
+
+        def select(table, params=None):
+            if table != "signals":
+                return []
+            if params and str(params.get("alerted_at", "")).startswith("gte."):
+                cut = float(params["alerted_at"][4:])
+                return [r for r in signals if r["alerted_at"] >= cut]
+            return sorted(signals, key=lambda r: -r["alerted_at"])[:1]
+
+        store_mod.store.select = select
+        store_mod.store.open_positions = lambda chain=None: list(positions)
+
+    try:
+        stub([{"ca": "a", "alerted_at": now - 300, "alert_sent": True},
+              {"ca": "b", "alerted_at": now - 900, "alert_sent": True}])
+        problems, facts = alive.check()
+        check("a working system reports nothing", problems, [])
+        check_true("and says so plainly",
+                   "alive" in alive.compose(problems, facts))
+
+        # The exact shape of both outages: recording stops entirely.
+        stub([{"ca": "a", "alerted_at": now - 4 * 3600, "alert_sent": True}])
+        problems, _ = alive.check()
+        check_true("a stalled scanner is caught",
+                   any("nothing recorded" in p for p in problems))
+
+        # Recording but never delivering — the send-failure burst.
+        stub([{"ca": f"s{i}", "alerted_at": now - 600, "alert_sent": False}
+              for i in range(20)])
+        problems, _ = alive.check()
+        check_true("signals that never send are caught",
+                   any("none sent" in p for p in problems))
+
+        # A position past max hold means the watcher has stopped closing.
+        stub([{"ca": "a", "alerted_at": now - 300, "alert_sent": True}],
+             [{"ca": "p", "alerted_at": now - 30 * 3600}])
+        problems, _ = alive.check()
+        check_true("a stalled watcher is caught",
+                   any("past the maximum hold" in p for p in problems))
+
+        stub([{"ca": "a", "alerted_at": now - 300, "alert_sent": True}],
+             live=False)
+        problems, _ = alive.check()
+        check_true("a lost database is caught",
+                   any("no database" in p for p in problems))
+    finally:
+        store_mod.store.select = real_select
+        store_mod.store.open_positions = real_open
+        store_mod.store.live = real_live
+
+
+def test_alert_floors_aligned():
+    """
+    Across 787 closed trades over two days: the 30-39 band won 32.4% and
+    40-49 won 31.4%, while 50-59 won 42.1% and everything above held at
+    41-42%. A ten point step at 50, not the flat plateau the score used to
+    show — so every tier sits there rather than at three separate guesses.
+    """
+    print("\nalert floors")
+    floors = config.CONVICTION["min_to_alert_by_tier"]
+    check_true("every tier uses the same floor", len(set(floors.values())) == 1)
+    check("and it sits at the step", set(floors.values()), {50})
+    check_true("still above the tracking floor",
+               min(floors.values()) > config.CONVICTION["min_to_track"])
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2141,6 +2228,8 @@ def main():
     test_provider_outage()
     test_malformed_payloads()
     test_cooloff_removed()
+    test_watchdog()
+    test_alert_floors_aligned()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")
