@@ -91,6 +91,29 @@ CHAINS = {
         "native":          "BNB",
         "addr_regex":      r"^0x[a-fA-F0-9]{40}$",
     },
+    # Arc — Circle's L1, public mainnet 16 September 2026. Disabled until the
+    # data providers index it: DexScreener and GeckoTerminal both need to
+    # know the chain before Surgeon can read anything, and neither publishes
+    # an identifier until launch. `python3 arc_ready.py` probes for them and
+    # prints this block filled in.
+    #
+    # Worth knowing what Arc is before expecting much: built for
+    # stablecoin-native applications and tokenized real-world assets, with
+    # BlackRock, Visa and DTCC as validators. Not obviously a memecoin chain.
+    # Being ready on day one costs little; expecting volume on day one might.
+    "arc": {
+        "display":          "Arc",
+        "kind":             "evm",
+        "enabled":          False,      # arc_ready.py resolves and flips this
+        "native":           "USDC",     # gas is paid in USDC
+        "dexscreener_id":   None,       # resolved at launch
+        "geckoterminal_id": None,       # resolved at launch
+        "goplus_chain_id":  None,
+        "blockscout":       None,
+        "explorer":         "https://explorer.arc.network",
+        "discovery_pages":  3,
+        "addr_regex":       r"^0x[a-fA-F0-9]{40}$",
+    },
     "monad": {
         "display":         "Monad",
         "kind":            "evm",
@@ -198,6 +221,14 @@ CHAIN_THRESHOLD_OVERRIDES = {
         # across 97 trades with a 16.5% win rate and produced one runner,
         # against 13.9% rug and 41 runners above $20k. Under $5k is only 13
         # trades — too few to defend a floor on, so it moves too.
+        "first_moon": {"min_liquidity": 10_000, "min_volume_1h": 1_500},
+        "boosted":    {"min_liquidity": 10_000, "min_volume_1h": 2_000},
+    },
+    # Arc's gates are Robinhood's until it has produced trades of its own. A
+    # new chain has no outcome data, and inventing thresholds for one is how
+    # first_moon ended up at a 25% momentum gate that blocked 83 of 96 Solana
+    # candidates.
+    "arc": {
         "first_moon": {"min_liquidity": 10_000, "min_volume_1h": 1_500},
         "boosted":    {"min_liquidity": 10_000, "min_volume_1h": 2_000},
     },
@@ -561,6 +592,7 @@ SMART_MONEY = {
     "base":      [],
     "bsc":       [],
     "monad":     [],
+    "arc":       [],
 }
 
 # ── SOCIAL CHANNELS ───────────────────────────────────────────────

@@ -237,3 +237,25 @@ dry. Confirm delivery first with `python3 scan.py --test-alert`.
 - **EVM smart money** — Helius is Solana-only, no per-chain wallet indexer found
 - **PumpFun WebSocket watcher** — cannot survive on scheduled Actions runs
 - **fomo integration** — revisit if a public API appears
+
+## Arc — scaffolded, waiting on providers
+
+Circle's L1, public mainnet 16 September 2026. The chain is defined in
+config and disabled; `arc_ready.py` probes DexScreener, GeckoTerminal,
+GoPlus and Blockscout for the four identifiers Surgeon needs and prints the
+config block filled in.
+
+DexScreener and GeckoTerminal are both required — one supplies price,
+liquidity and volume, the other supplies new-pool discovery. GoPlus and
+Blockscout are optional: without them every Arc token reads UNVERIFIED and
+cluster detection is unavailable, but everything else works.
+
+Run it from the Actions tab: **Arc Ready** -> Run workflow. It also runs
+itself daily at 13:00 UTC, so from 16 September the answer will be sitting in
+the run log each day without needing to be asked for.
+
+Providers add chains at their own pace; Base took about a week after launch.
+
+Worth remembering what Arc is before expecting volume: built for
+stablecoin-native applications and tokenized real-world assets, with
+BlackRock, Visa and DTCC as validators. Not obviously a memecoin chain.

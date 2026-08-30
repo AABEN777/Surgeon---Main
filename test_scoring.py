@@ -2470,6 +2470,71 @@ def test_breaker_ignores_missing_tokens():
         chain_base._host_health.clear()
 
 
+def test_arc_ready_when_enabled():
+    """
+    Arc's public mainnet is 16 September 2026. Surgeon is chain-agnostic, so
+    the only thing missing is four identifiers that do not exist until the
+    data providers index the network — arc_ready.py resolves them.
+
+    This proves the scaffold works the moment they arrive, rather than
+    discovering on launch day that something needed changing.
+    """
+    import chains as chains_mod, chain_base, arc_ready
+    print("\narc readiness")
+
+    check_true("arc is defined", "arc" in config.CHAINS)
+    check("but disabled until resolved", config.CHAINS["arc"]["enabled"], False)
+    check_true("and absent from the rotation",
+               "arc" not in config.enabled_chains())
+    check("gas is USDC", config.CHAINS["arc"]["native"], "USDC")
+    check_true("it has threshold overrides",
+               "arc" in config.CHAIN_THRESHOLD_OVERRIDES)
+    check_true("and a smart-wallet slot", "arc" in config.SMART_MONEY)
+
+    # The resolver has to probe every identifier Surgeon actually needs.
+    for fn in ("probe_dexscreener", "probe_geckoterminal",
+               "probe_goplus", "probe_explorer"):
+        check_true(f"resolver probes {fn.split('_')[1]}",
+                   hasattr(arc_ready, fn))
+
+    # Now prove it works once resolved.
+    saved = dict(config.CHAINS["arc"])
+    real_get = chain_base.http_get
+    try:
+        config.CHAINS["arc"].update(
+            enabled=True, dexscreener_id="arc", geckoterminal_id="arc",
+            goplus_chain_id="9999", blockscout="https://arc.blockscout.com")
+        chain_base.http_get = lambda *a, **k: None
+
+        check_true("arc joins the rotation once enabled",
+                   "arc" in config.enabled_chains())
+
+        adapter = chains_mod.get_adapter("arc")
+        adapter.safety("0x" + "a" * 40, "0xp")
+        adapter.market("0x" + "a" * 40)
+        adapter.discover()
+        check_true("its adapter runs without a network", True)
+
+        market = TokenMarket(ca="0x" + "b" * 40, chain="arc", name="T",
+                             symbol="T", liquidity_usd=40000, fdv=90000,
+                             market_cap=90000, volume_24h=200000,
+                             volume_1h=90000, volume_5m=6000, change_5m=6,
+                             change_1h=70, buys_5m=60, sells_5m=20,
+                             age_hours=0.6, age_known=True, dex="arcdex")
+        ev = scoring.evaluate(market,
+                              SafetyReport(ca="0x" + "b" * 40, chain="arc"),
+                              "arc")
+        check_true("a healthy arc token scores and alerts", ev.should_alert)
+        check("and lands in a tier", ev.tier.tier, "first_moon")
+    finally:
+        chain_base.http_get = real_get
+        config.CHAINS["arc"].clear()
+        config.CHAINS["arc"].update(saved)
+
+    check_true("and is disabled again afterwards",
+               "arc" not in config.enabled_chains())
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2587,6 +2652,7 @@ def main():
     test_wallet_clusters()
     test_provider_outage()
     test_breaker_ignores_missing_tokens()
+    test_arc_ready_when_enabled()
     test_malformed_payloads()
     test_cooloff_removed()
     test_watchdog()
