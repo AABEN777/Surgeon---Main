@@ -80,6 +80,30 @@ class ChainRun:
                 self.gate_fails[key] = self.gate_fails.get(key, 0) + 1
 
 
+def _worth_parking_unverified(ev) -> bool:
+    """
+    Scored well, matched a tier, and was silenced only because no safety
+    source had answered yet.
+
+    GoPlus and RugCheck both need a few minutes on a fresh launch, so an EVM
+    token discovered at three minutes old is routinely unverifiable at the
+    moment we look and perfectly readable at eight. UNVERIFIED costs 18
+    points, which is usually the difference between alerting and not.
+
+    Parked rather than discarded, so the revival pass re-reads safety and
+    lets it through if it comes back clean.
+    """
+    if not ev.tier.matched or ev.should_alert:
+        return False
+    if not any(l == "UNVERIFIED" for l, _ in ev.conviction.components):
+        return False
+    # Only worth waiting for if the penalty is the whole reason it is silent.
+    floor = config.CONVICTION["min_to_alert_by_tier"].get(
+        ev.tier.tier, config.CONVICTION["min_to_alert"])
+    without_penalty = ev.conviction.score - config.CONVICTION["unverified"]
+    return without_penalty >= floor
+
+
 def _worth_parking(tier_result, market) -> bool:
     """
     Too young, but structurally plausible.
@@ -538,7 +562,8 @@ def scan_chain(chain: str, social_counts: dict[str, float],
                 if (run.parked < min(MAX_PARK_PER_SCAN, park_budget)
                         and _worth_parking(pre, market)):
                     if store.watch_later(ca, chain, market.age_hours,
-                                         market.name, market.symbol):
+                                         market.name, market.symbol,
+                                         reason="too_young"):
                         run.parked += 1
                 continue
 
@@ -559,6 +584,21 @@ def scan_chain(chain: str, social_counts: dict[str, float],
 
             # Everything above the tracking floor is recorded and watched;
             # only the higher bar reaches Telegram.
+            # Silenced only because no safety source had answered yet. Park
+            # it so the revival pass re-reads safety in a few minutes and
+            # lets it through if it comes back clean — GoPlus and RugCheck
+            # both need time on a fresh launch, and UNVERIFIED costs 18
+            # points, which is usually the whole difference.
+            if (not alerts_muted and run.parked < park_budget
+                    and _worth_parking_unverified(ev)):
+                if store.watch_later(ca, chain, market.age_hours,
+                                     market.name, market.symbol,
+                                     reason="unverified"):
+                    run.parked += 1
+                    log.info("[%s] %s %d/100 held for safety — %s",
+                             chain, market.symbol, ev.conviction.score,
+                             "would clear the floor once verified")
+
             if not ev.should_alert or alerts_muted:
                 run.tracked_only += 1
                 # The label used to say "cooloff" whichever condition

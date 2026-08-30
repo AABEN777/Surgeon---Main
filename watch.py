@@ -270,8 +270,35 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
             market = markets.get(ca)
             entry = float(row.get("entry_price") or 0)
 
-            # A pair that has vanished is not a neutral outcome.
-            if not market or not market.ok or market.liquidity_usd <= 0:
+            # A pair that has vanished is not a neutral outcome — but
+            # "DexScreener returned nothing" is not the same as "the pool is
+            # empty", and this treated them identically. Every timeout and
+            # 500 wrote -100% into the outcome data, and there were dozens an
+            # hour during their outage. The weights we have been tuning all
+            # week were learned partly from those.
+            #
+            # A real rug stays gone. A failed fetch does not, so absence has
+            # to be confirmed across checks before it counts as death.
+            missed = int(row.get("missed_checks") or 0)
+            if not market:
+                # Weakest evidence: we simply got nothing back.
+                needed = config.WATCH["rug_confirmations_no_data"]
+                gone_reason = "no market data"
+            elif not market.ok or market.liquidity_usd <= 0:
+                # Stronger: the API answered and the pool is empty.
+                needed = config.WATCH["rug_confirmations_empty"]
+                gone_reason = "pool reads empty"
+            else:
+                needed = 0
+
+            if needed:
+                missed += 1
+                if missed < needed:
+                    store.note_missed_check(ca, missed)
+                    res.unavailable = getattr(res, "unavailable", 0) + 1
+                    log.info("[%s] %s %s (%d/%d) — holding, not closing",
+                             chain, ca[:10], gone_reason, missed, needed)
+                    continue
                 store.close_position(ca, "LOSS", "RUGGED", final_pnl=-100.0,
                                      peak_pnl=float(row.get("peak_pnl") or 0))
                 res.closed += 1
@@ -279,8 +306,13 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
                 if not dry_run and row.get("alert_sent"):
                     alerts.send(alerts.format_watch(
                         "STOP_LOSS", row.get("name") or ca[:10], ca, -100.0,
-                        adapter, "liquidity gone — position marked rugged"))
+                        adapter,
+                        f"liquidity gone — confirmed over {missed} checks"))
                 continue
+
+            # It answered, so any earlier absence was our side, not the pool's.
+            if missed:
+                store.note_missed_check(ca, 0)
 
             res.checked += 1
             pnl = _pnl(entry, market.price_usd)

@@ -2291,6 +2291,112 @@ def test_mute_reason_names_itself():
     store_mod._mem["signals"] = []
 
 
+def test_rug_needs_confirmation():
+    """
+    "DexScreener returned nothing" and "the pool is empty" were treated
+    identically, and both wrote -100% into the outcome data.
+
+    During their outage there were dozens of timeouts an hour, so an unknown
+    number of healthy tokens were recorded as rugs — and the weights we spent
+    the week tuning were learned partly from those rows.
+
+    A real rug stays gone. A failed fetch does not.
+    """
+    import watch, store as store_mod, chain_base, time as _t
+    print("\nrug confirmation")
+
+    now = _t.time()
+
+    def fresh():
+        store_mod._mem["signals"] = [{
+            "ca": "0xAAA", "chain": "base", "name": "T", "symbol": "T",
+            "outcome": "pending", "entry_price": 1.0, "peak_price": 1.4,
+            "alerted_at": now - 3600, "liquidity_usd": 40000,
+            "alert_sent": True, "missed_checks": 0, "peak_pnl": 40}]
+
+    live = {"0xAAA": TokenMarket(ca="0xAAA", chain="base", name="T",
+                                 symbol="T", price_usd=1.3,
+                                 liquidity_usd=40000, fdv=90000,
+                                 volume_1h=20000, volume_5m=1500,
+                                 dex="uniswap")}
+
+    real = chain_base.dexscreener_markets
+
+    def tick(markets):
+        chain_base.dexscreener_markets = lambda cas, chain, cid: markets
+        rows = [r for r in store_mod._mem["signals"]
+                if r["outcome"] == "pending"]
+        if rows:
+            watch.watch_chain("base", rows, dry_run=True)
+        return store_mod._mem["signals"][0]
+
+    try:
+        fresh()
+        check("one silent check does not close it",
+              tick({})["outcome"], "pending")
+        check("nor does a second", tick({})["outcome"], "pending")
+        check_true("the third does", tick({})["outcome"] != "pending")
+
+        # And a token that comes back was never dead.
+        fresh()
+        tick({}); tick({})
+        row = tick(live)
+        check("a recovered token stays open", row["outcome"], "pending")
+        check("and its miss count resets", row["missed_checks"], 0)
+
+        check_true("silence needs more confirmation than an empty pool",
+                   config.WATCH["rug_confirmations_no_data"]
+                   > config.WATCH["rug_confirmations_empty"])
+    finally:
+        chain_base.dexscreener_markets = real
+        store_mod._mem["signals"] = []
+
+
+def test_unverified_held_for_recheck():
+    """
+    GoPlus and RugCheck both need a few minutes on a fresh launch, so an EVM
+    token discovered at three minutes old is routinely unverifiable at the
+    moment we look and perfectly readable at eight.
+
+    UNVERIFIED costs 18 points, which is usually the whole difference between
+    alerting and not. Rather than discard those, park them so the revival
+    pass re-reads safety.
+    """
+    import scan
+    print("\nunverified held for recheck")
+
+    strong = TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                         liquidity_usd=40000, fdv=90000, market_cap=90000,
+                         volume_24h=200000, volume_1h=90000, volume_5m=6000,
+                         change_5m=6, change_1h=70, buys_5m=60, sells_5m=20,
+                         age_hours=0.6, age_known=True, dex="uniswap")
+
+    unread = scoring.evaluate(strong, SafetyReport(ca="x", chain="base"), "base")
+    check_true("a strong token with no safety read is silent",
+               not unread.should_alert)
+    check_true("but is held for a re-check",
+               scan._worth_parking_unverified(unread))
+
+    clean = scoring.evaluate(
+        strong,
+        SafetyReport(ca="x", chain="base", sources=["goplus"],
+                     top_holder_pct=3.0, holder_count=600,
+                     lp_locked_pct=100.0, creator_holds_pct=0.1,
+                     honeypot=False), "base")
+    check_true("the same token alerts once safety answers", clean.should_alert)
+    check_true("and is not parked", not scan._worth_parking_unverified(clean))
+
+    # Only worth waiting for if the penalty is the whole reason it is quiet.
+    weak = TokenMarket(ca="y", chain="base", name="W", symbol="W",
+                       liquidity_usd=25000, fdv=70000, market_cap=70000,
+                       volume_24h=60000, volume_1h=22000, volume_5m=1400,
+                       change_5m=2, change_1h=30, buys_5m=14, sells_5m=9,
+                       age_hours=0.6, age_known=True, dex="uniswap")
+    weak_ev = scoring.evaluate(weak, SafetyReport(ca="y", chain="base"), "base")
+    check_true("a token that would still fail is not parked",
+               not scan._worth_parking_unverified(weak_ev))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2415,6 +2521,8 @@ def main():
     test_liquidity_floor_not_tiers()
     test_thin_liquidity_band()
     test_mute_reason_names_itself()
+    test_rug_needs_confirmation()
+    test_unverified_held_for_recheck()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

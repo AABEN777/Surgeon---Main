@@ -277,6 +277,26 @@ class Store:
             params["chain"] = f"eq.{chain}"
         return self.select("signals", params)
 
+    def note_missed_check(self, ca: str, count: int):
+        """
+        How many consecutive checks have failed to see this token.
+
+        Absence is only evidence when it repeats. A single missing reading is
+        usually DexScreener timing out, and treating that as a rug wrote
+        -100% into the outcome data every time their API stuttered.
+        """
+        if not self.live:
+            for row in _mem.get("signals", []):
+                if row.get("ca") == ca and row.get("outcome") == "pending":
+                    row["missed_checks"] = count
+            return
+        try:
+            self._req("PATCH", "signals", params={
+                "ca": f"eq.{ca}", "outcome": "eq.pending"},
+                json={"missed_checks": count})
+        except Exception as e:
+            log.warning("note_missed_check %s failed: %s", ca[:10], e)
+
     def close_position(self, ca: str, outcome: str, exit_type: str,
                        final_pnl: float, peak_pnl: float = 0.0):
         return self.update("signals", {"ca": ca, "outcome": "pending"}, {
@@ -304,7 +324,8 @@ class Store:
     # scan they have dropped out of the new-pool feed. Waiting is correct;
     # forgetting is not.
     def watch_later(self, ca: str, chain: str, age_hours: float,
-                    name: str = "", symbol: str = "") -> bool:
+                    name: str = "", symbol: str = "",
+                    reason: str = "too_young") -> bool:
         """
         Park a token, once.
 
@@ -322,6 +343,10 @@ class Store:
             "first_seen": time.time(),
             "first_age_hours": age_hours,
             "checks": 0,
+            # Why it is waiting. "too_young" ages into its gates; "unverified"
+            # is waiting for a safety source to answer, which usually takes
+            # minutes on a fresh EVM launch.
+            "park_reason": reason,
         })
         return True
 

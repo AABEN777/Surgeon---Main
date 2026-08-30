@@ -164,6 +164,18 @@ alter table meta_terms   enable row level security;
 alter table bot_state    enable row level security;
 alter table token_buyers enable row level security;
 
+
+-- ── columns added after the first release, part two ──────────────
+-- How many consecutive checks have failed to see a token. Absence is only
+-- evidence when it repeats: "DexScreener returned nothing" and "the pool is
+-- empty" were treated identically, so every timeout wrote -100% into the
+-- outcome data.
+alter table signals   add column if not exists missed_checks integer default 0;
+
+-- Why a token is parked. "too_young" ages into its gates; "unverified" is
+-- waiting for a safety source to answer.
+alter table watchlist add column if not exists park_reason text default 'too_young';
+
 -- ── row level security ───────────────────────────────────────────
 -- Surgeon connects with the service key, which bypasses RLS. These
 -- policies exist so the anon key cannot read your signal history if

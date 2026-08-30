@@ -667,6 +667,12 @@ WATCH = {
     # addresses per request, so 25 positions is one call and 90 is three.
     # Raised to a number that bounds the watcher's runtime rather than one
     # that stands in for a wallet.
+    # Absence has to be confirmed before it counts as a rug. "DexScreener
+    # returned nothing" and "the pool is empty" were treated identically, so
+    # every timeout wrote -100% into the outcome data — and during their
+    # outage there were dozens an hour.
+    "rug_confirmations_no_data":  3,   # 15 minutes of silence
+    "rug_confirmations_empty":    2,   # 10 minutes of a genuinely empty pool
     "max_open_positions":    90,  # tracking cap
     # Removed. Inherited from the autonomous version, where pausing after
     # losses protected capital that was actually being spent. Signal-only it
