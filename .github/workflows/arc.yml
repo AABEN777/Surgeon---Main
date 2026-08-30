@@ -1,0 +1,54 @@
+name: Arc Ready
+
+# Arc's public mainnet is 16 September 2026. Surgeon cannot read a chain
+# until DexScreener and GeckoTerminal publish identifiers for it, and neither
+# does that before launch.
+#
+# Run this from the Actions tab on launch day and each day after. The output
+# either prints a config block ready to paste, or names which providers are
+# still missing.
+on:
+  workflow_dispatch:
+    inputs:
+      verbose:
+        description: "Show what each provider returned"
+        required: false
+        default: false
+        type: boolean
+
+  # Once a day through the launch window, so the answer is waiting rather
+  # than needing to be asked for. Harmless before then — it simply reports
+  # that nothing is indexed yet.
+  schedule:
+    - cron: "0 13 * * *"
+
+  repository_dispatch:
+    types: [run-arc-ready]
+
+concurrency:
+  group: surgeon-arc-ready
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Never fails the run: "not indexed yet" is an answer, not an error.
+      - name: Probe every provider for Arc
+        run: |
+          python3 arc_ready.py ${{ inputs.verbose && '--verbose' || '' }} \
+            || echo "Arc not scannable yet — see above for what is missing"
