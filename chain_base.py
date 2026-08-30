@@ -278,6 +278,11 @@ _GT_POOL_CACHE: dict = {}              # (network, ca) -> (ts, pool payload)
 _GT_POOL_TTL = 180
 
 
+# Status codes that say something about the host rather than the token.
+# 404 and 400 are answers about one request; 401, 403, 429 and 5xx are the
+# host refusing or failing.
+HOST_LEVEL_FAILURES = {401, 403, 429, 500, 502, 503, 504, 520, 521, 522, 524}
+
 # host -> (consecutive failures, when it goes back in service)
 _host_health: dict[str, list] = {}
 
@@ -345,7 +350,15 @@ def http_get(url: str, params: dict | None = None,
                 delay *= config.HTTP_BACKOFF
                 continue
             log.warning("GET %s -> HTTP %s", url, r.status_code)
-            _note_failure(host)
+            # A 404 means this token is not in that index yet, which is the
+            # normal answer for a fresh launch — not a sign the host is
+            # down. Counting them tripped the breaker after four new tokens
+            # in a row, and then no safety call went out for three minutes,
+            # so everything in that window came back UNVERIFIED.
+            if r.status_code in HOST_LEVEL_FAILURES:
+                _note_failure(host)
+            else:
+                _note_success(host)
             return None
         except Exception as e:
             if attempt < retries:

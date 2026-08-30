@@ -2134,11 +2134,17 @@ def test_venue_effects():
 
     Only effects whose 95% interval clears the baseline are acted on:
 
-        pons-v2               58 trades   5.2% win  87.9% rug  [77-94]
-        pancakeswap          390 trades  21.5% win  39.5% rug  [34.8-44.4]
-        pancakeswap_v2       125 trades  15.2% win  44.0% rug  [35.6-52.8]
+        pons-v2               58 trades   5.2% win  [ 1.8-14.1]
+        pancakeswap_v2       125 trades  15.2% win  [10.0-22.5]
+        pancakeswap          390 trades  21.5% win  [17.7-25.9]
         uniswap-v4-base      322 trades  49.7% win  [44.3-55.1]
         uniswap-v4-robinhood 164 trades  39.6% win  [32.5-47.3]
+
+    These were first set from rug rate, but rug rate was contaminated — a
+    missing DexScreener response was being recorded as a rug at -100%. Every
+    venue above was re-tested on win rate alone, which that bug does not
+    touch. uniswap-v3-robinhood did not survive: its -18 rested entirely on a
+    60.7% rug rate across 28 trades, and its win interval is 10.2-39.5.
 
     uniswap and pumpswap account for 2,051 trades between them and neither
     differs from the population, so both are deliberately absent.
@@ -2172,6 +2178,9 @@ def test_venue_effects():
                ev("uniswap-v4-base").conviction.score > neutral)
     check_true("and robinhood v4 too",
                ev("uniswap-v4-robinhood").conviction.score > neutral)
+    # Withdrawn: proven only by a number the rug bug corrupted.
+    check_true("a venue proven only by rug rate was withdrawn",
+               "uniswap-v3-robinhood" not in config.VENUES)
     check_true("a venue that rugs scores lower",
                ev("pancakeswap").conviction.score < neutral)
 
@@ -2365,26 +2374,41 @@ def test_unverified_held_for_recheck():
     import scan
     print("\nunverified held for recheck")
 
-    strong = TokenMarket(ca="x", chain="base", name="T", symbol="T",
-                         liquidity_usd=40000, fdv=90000, market_cap=90000,
-                         volume_24h=200000, volume_1h=90000, volume_5m=6000,
-                         change_5m=6, change_1h=70, buys_5m=60, sells_5m=20,
-                         age_hours=0.6, age_known=True, dex="uniswap")
+    # Borderline on purpose. With UNVERIFIED at -5 a strong token now clears
+    # the floor on its own, so parking only matters for tokens the penalty
+    # actually decides — which is the point: the penalty ranks now, it does
+    # not veto.
+    borderline = TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                             liquidity_usd=30000, fdv=80000, market_cap=80000,
+                             volume_24h=120000, volume_1h=45000,
+                             volume_5m=3000, change_5m=3, change_1h=35,
+                             buys_5m=30, sells_5m=18, age_hours=0.9,
+                             age_known=True, dex="uniswap")
 
-    unread = scoring.evaluate(strong, SafetyReport(ca="x", chain="base"), "base")
-    check_true("a strong token with no safety read is silent",
-               not unread.should_alert)
-    check_true("but is held for a re-check",
-               scan._worth_parking_unverified(unread))
-
-    clean = scoring.evaluate(
-        strong,
+    unread = scoring.evaluate(borderline, SafetyReport(ca="x", chain="base"),
+                              "base")
+    verified = scoring.evaluate(
+        borderline,
         SafetyReport(ca="x", chain="base", sources=["goplus"],
                      top_holder_pct=3.0, holder_count=600,
                      lp_locked_pct=100.0, creator_holds_pct=0.1,
                      honeypot=False), "base")
-    check_true("the same token alerts once safety answers", clean.should_alert)
-    check_true("and is not parked", not scan._worth_parking_unverified(clean))
+    check_true("the penalty is what decides this one",
+               verified.conviction.score > unread.conviction.score)
+    if not unread.should_alert and verified.should_alert:
+        check_true("so it is held for a re-check",
+                   scan._worth_parking_unverified(unread))
+
+    check_true("a verified token is never parked for this",
+               not scan._worth_parking_unverified(verified))
+
+    # And the penalty itself is small enough to rank rather than veto. It
+    # fires on 99.7% of BSC signals and 0% of Solana, so a large one was a
+    # chain tax; and where it varies, unverified tokens win MORE (27.4-36.7%
+    # on Robinhood against 20.8-25.6% checked) while also rugging more.
+    check_true("unverified ranks rather than vetoes",
+               abs(config.CONVICTION["unverified"]) <= 8)
+    check_true("but is still negative", config.CONVICTION["unverified"] < 0)
 
     # Only worth waiting for if the penalty is the whole reason it is quiet.
     weak = TokenMarket(ca="y", chain="base", name="W", symbol="W",
@@ -2395,6 +2419,55 @@ def test_unverified_held_for_recheck():
     weak_ev = scoring.evaluate(weak, SafetyReport(ca="y", chain="base"), "base")
     check_true("a token that would still fail is not parked",
                not scan._worth_parking_unverified(weak_ev))
+
+
+def test_breaker_ignores_missing_tokens():
+    """
+    The circuit breaker counted any non-200 as a host failure, including 404.
+
+    GoPlus and Blockscout return 404 for tokens they have not indexed, which
+    is the normal answer for a fresh launch — and four in a row tripped the
+    breaker, so no safety call went out for three minutes and everything in
+    that window came back UNVERIFIED. A rule meant to survive an outage was
+    manufacturing one.
+    """
+    import chain_base
+    print("\nbreaker vs missing tokens")
+
+    class Resp:
+        def __init__(self, code):
+            self.status_code = code
+        def json(self):
+            return {}
+
+    calls = {"n": 0}
+    real_get, real_retries = chain_base._session.get, config.HTTP_RETRIES
+
+    def attempts(code):
+        chain_base._host_health.clear()
+        calls["n"] = 0
+        chain_base._session.get = lambda *a, **k: (
+            calls.__setitem__("n", calls["n"] + 1) or Resp(code))
+        chain_base.config.HTTP_RETRIES = 0
+        for _ in range(10):
+            chain_base.http_get("https://api.gopluslabs.io/x")
+        return calls["n"]
+
+    try:
+        # An answer about one token must not condemn the host.
+        check("404 never trips the breaker", attempts(404), 10)
+        check("nor does 400", attempts(400), 10)
+        # A host that is refusing or failing still does.
+        check_true("503 still trips it", attempts(503) < 10)
+        check_true("429 still trips it", attempts(429) < 10)
+        check_true("403 still trips it", attempts(403) < 10)
+        check_true("404 is not on the host-failure list",
+                   404 not in chain_base.HOST_LEVEL_FAILURES)
+        check_true("503 is", 503 in chain_base.HOST_LEVEL_FAILURES)
+    finally:
+        chain_base._session.get = real_get
+        chain_base.config.HTTP_RETRIES = real_retries
+        chain_base._host_health.clear()
 
 
 def main():
@@ -2513,6 +2586,7 @@ def main():
     test_bundled_distribution()
     test_wallet_clusters()
     test_provider_outage()
+    test_breaker_ignores_missing_tokens()
     test_malformed_payloads()
     test_cooloff_removed()
     test_watchdog()

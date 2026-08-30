@@ -158,6 +158,90 @@ thirty addresses per request, so 25 positions is one call and 90 is three.
 Third time a rule written for the autonomous bot has silenced a runner in a
 signal-only system. Worth auditing anything else inherited from that era.
 
+## Two data-integrity bugs
+
+**False rugs.** `not market` — DexScreener returning nothing — was treated
+identically to an empty pool, and both wrote -100% into the outcome data.
+Their API timed out dozens of times an hour during the outage, so an unknown
+number of healthy tokens were recorded as rugs. Every conclusion drawn from
+outcome data this week rests partly on those rows: win rates understated,
+rug rates overstated, and the venue penalties in particular may be inflated.
+
+Absence now has to repeat before it counts — three silent checks for no data,
+two for a pool that genuinely reads empty, and a token that comes back resets
+its counter.
+
+**UNVERIFIED was a chain tax, not a risk signal.** It fires on 99.7% of BSC
+signals, 84.9% of Robinhood, 11.9% of Base and 0% of Solana, because RugCheck
+always answers and GoPlus usually does not on a fresh EVM launch.
+
+And where it varies it does not predict badness. On Robinhood, unverified
+tokens win 27.4-36.7% against checked at 20.8-25.6%, and rug 26.9-36.1%
+against 14.6-18.9% — neither interval overlaps. They win more and rug more,
+with an average peak of 75 against 44. That is a newer token, which
+GOLDEN_WINDOW already pays +15 for; we were charging 18 for the same fact.
+
+Reduced to -5. Analyst was seen twice at 2.29h and 2.87h, scored 32 and 42,
+and ran +3,536%. At -5 it scores 45 and 55, and the second sighting alerts.
+
+Unverified tokens that would clear their floor once checked are now also
+parked for a re-read, since GoPlus needs a few minutes on a fresh launch.
+
+## Audit — which decisions rested on the false rug data
+
+King caught that the venue penalties were set from rug rate while rug rate
+was known to be contaminated. Every decision made from that dataset was
+re-tested using win rate alone, which the bug does not touch.
+
+**Survived on win rate alone:**
+
+| decision | evidence without rug rate |
+|---|---|
+| pons-v2 blocked | 5.2% win [1.8-14.1], n=58 |
+| pancakeswap_v2 -18 | 15.2% win [10.0-22.5], n=125 |
+| pancakeswap -18 | 21.5% win [17.7-25.9], n=390 |
+| uniswap-v4-base +6 | 49.7% win [44.3-55.1], n=322 |
+| uniswap-v4-robinhood +6 | 39.6% win [32.5-47.3], n=164 |
+| liquidity floor $10k | under $10k wins 20.3% [14.2-28.3] |
+| robinhood $5k-10k closed | 16.5% win [10.4-25.1], 1 runner in 97 |
+| EVEN_SPLIT penalty cut | 40.5% win [30.1-51.9], above baseline |
+| UNVERIFIED cut to -5 | 27.4-36.7% vs 20.8-25.6% checked, no overlap |
+
+**Withdrawn:** uniswap-v3-robinhood's -18. It rested entirely on a 60.7% rug
+rate across 28 trades; its win interval is 10.2-39.5, which spans the
+baseline and proves nothing. Worth re-checking once the rug data is clean.
+
+Worth noting the direction of the contamination for the UNVERIFIED decision:
+false rugs come from DexScreener having no record of a token, which is more
+likely for newer tokens, which are also more likely to be unverified. So the
+unverified rug rate was inflated more than the checked one — which makes the
+case for cutting that penalty stronger, not weaker.
+
+## The circuit breaker was manufacturing the outage it existed to survive
+
+King noticed alerts arriving UNVERIFIED far more often than before. It was
+the breaker, added the previous day, counting any non-200 as a host failure.
+
+GoPlus and Blockscout return 404 for tokens they have not indexed — the
+normal answer for a fresh launch, and the scan log was full of them. Four in
+a row tripped the breaker, and then no safety call went out for 180 seconds,
+so every token evaluated in that window came back UNVERIFIED. A scan takes
+two to five minutes per chain, so one trip could blank safety for most of it.
+
+Now only 401, 403, 429 and 5xx count as host failures. A 404 is an answer
+about one token, not a verdict on the host, and it resets the counter rather
+than incrementing it.
+
+**This partly contaminates the UNVERIFIED analysis.** The 84.9% Robinhood and
+99.7% BSC figures span 48 hours, and the breaker was live for roughly half of
+that. The chain pattern itself is structural — RugCheck answers for Solana,
+GoPlus often does not for fresh EVM launches — so the direction holds. But
+the magnitude is overstated, and the -5 penalty should be re-checked against
+clean data in a few days.
+
+Second time in two days a rule of mine has caused the problem it was written
+to prevent.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

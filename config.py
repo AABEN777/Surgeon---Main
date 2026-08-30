@@ -287,10 +287,17 @@ VENUES = {
     # blocked outright: 5.2% win, 87.9% rug across 58 trades
     "pons-v2":              {"block": True},
 
-    # rug rates two or more times the baseline
-    "uniswap-v3-robinhood": {"conviction": -18},   # 60.7% rug, n=28
-    "pancakeswap_v2":       {"conviction": -18},   # 44.0% rug, n=125
-    "pancakeswap":          {"conviction": -18},   # 39.5% rug, n=390
+    # Win rates whose upper bound sits below the baseline. These were first
+    # set from rug rate, but rug rate was contaminated: "DexScreener returned
+    # nothing" was being recorded as a rug at -100%. Re-tested on win rate
+    # alone, which that bug does not touch, and both survive.
+    "pancakeswap_v2":       {"conviction": -18},   # 15.2% win [10.0-22.5], n=125
+    "pancakeswap":          {"conviction": -18},   # 21.5% win [17.7-25.9], n=390
+
+    # uniswap-v3-robinhood removed. Its -18 rested entirely on a 60.7% rug
+    # rate across 28 trades, and on win rate alone the interval is 10.2-39.5
+    # — it spans the baseline and proves nothing. Worth re-checking once the
+    # rug data is clean.
 
     # win rates whose lower bound sits above the baseline
     "uniswap-v4-base":      {"conviction":  +6},   # 49.7% win, n=322
@@ -389,11 +396,25 @@ CONVICTION = {
     "liquidity":  [(20_000, 10), (15_000, 5)],
     "social":     {3: 20, 2: 12, 1: 5},                  # unique channels
     "smart_money":{2: 20, 1: 12},                        # unique wallets
-    # -25 was double-counting only while these were also being muted. With
-    # muting gone the penalty does the whole job again, but at -18 rather
-    # than -25 so an unverifiable token can still clear the tracking floor
-    # and keep feeding the outcome data.
-    "unverified": -18,
+    # Reduced from -18 after measuring what it actually tracks.
+    #
+    # It fires on 99.7% of BSC signals, 84.9% of Robinhood, 11.9% of Base and
+    # 0% of Solana — RugCheck always answers, GoPlus usually does not on a
+    # fresh EVM launch. So it was less a risk signal than a tax on two
+    # chains.
+    #
+    # And where it varies, it does not predict badness. On Robinhood
+    # unverified tokens win 27.4-36.7% against checked at 20.8-25.6%, and rug
+    # 26.9-36.1% against 14.6-18.9% — neither interval overlaps. They win
+    # more AND rug more, with an average peak of 75 against 44. That is the
+    # signature of a newer token, which GOLDEN_WINDOW already pays +15 for.
+    # We were charging 18 for the same fact.
+    #
+    # Kept negative because not knowing is genuinely worse than knowing, but
+    # small enough that it ranks rather than decides. Analyst scored 32 and
+    # 42 with the old penalty and went on to run +3,536%; at -5 it scores 45
+    # and 55, and the second alerts.
+    "unverified": -5,
     "partial_safety": -8,
     # Removed. Fired on 0 of 1,116 closed trades across every tier — either
     # holder_count is not populating or the 300 line is cleared by everyone.
