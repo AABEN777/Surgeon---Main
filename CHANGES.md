@@ -137,6 +137,27 @@ Every threshold above was set from a Wilson interval rather than a point
 estimate, so an effect has to survive its own uncertainty before it changes
 anything.
 
+## The mute label was lying
+
+On 29 August the record said `muted:cooloff` for MU at 69/100, which ran
+**+5,072%**. The cooloff had been removed two days earlier.
+
+The label was hardcoded in scan.py and threw away which condition actually
+fired. The real cause was the position cap — 32 positions open against a cap
+of 25 — which also silenced VAULT at 71/100 (+1,313%) and GG at 61/100
+(+2,985%). All three cleared every floor, and the record sent us hunting a
+rule that no longer existed.
+
+Two fixes. The reason is now carried from the condition that raised it, so
+`muted:position_cap:32/25` says what happened. And the cap moved from 25 to
+90, because it was inherited from the autonomous version where 25 open
+positions meant genuine capital exposure — signal-only it only decides not
+to speak, and it is not protecting against load either: the watcher batches
+thirty addresses per request, so 25 positions is one call and 90 is three.
+
+Third time a rule written for the autonomous bot has silenced a runner in a
+signal-only system. Worth auditing anything else inherited from that era.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

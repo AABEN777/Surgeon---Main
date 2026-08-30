@@ -657,7 +657,17 @@ WATCH = {
     "whale_recheck_min_pnl": 30,
     "whale_top_holder_pct":  30,
     "graduation_bc_pct":     60,
-    "max_open_positions":    25,  # tracking cap
+    # Inherited from the autonomous version, where 25 open positions meant
+    # 25 real trades and genuine capital exposure. Signal-only it only
+    # decides not to speak — and on 29 August it silenced MU at 69/100 which
+    # ran +5,072%, VAULT at 71/100 which ran +1,313%, and GG at 61/100 which
+    # ran +2,985%. All three cleared every floor.
+    #
+    # It is not protecting against load either: the watcher batches thirty
+    # addresses per request, so 25 positions is one call and 90 is three.
+    # Raised to a number that bounds the watcher's runtime rather than one
+    # that stands in for a wallet.
+    "max_open_positions":    90,  # tracking cap
     # Removed. Inherited from the autonomous version, where pausing after
     # losses protected capital that was actually being spent. Signal-only it
     # only decides not to speak, and it silenced Titan at 67/100 — which went

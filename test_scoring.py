@@ -2029,12 +2029,17 @@ def test_cooloff_removed():
     blocked, _ = scan.portfolio_blocked()
     check_true("consecutive losses no longer mute alerts", not blocked)
 
-    # The position cap stays: that one limits noise, not losses.
+    # The position cap stays, but it bounds the watcher's runtime rather
+    # than standing in for a wallet — and it now names itself, because the
+    # mute reason used to say "cooloff" whichever condition fired, which sent
+    # us hunting a removed rule while the cap silenced a token that ran
+    # +5,072%.
     s.insert("signals", [{"ca": f"p{i}", "chain": "solana",
                           "outcome": "pending", "alerted_at": now}
-                         for i in range(config.WATCH["max_open_positions"])])
+                         for i in range(config.WATCH["max_open_positions"] + 1)])
     blocked, why = scan.portfolio_blocked()
-    check_true("the position cap still applies", blocked and "tracking" in why)
+    check_true("the position cap still applies",
+               blocked and why.startswith("position_cap:"))
 
     store_mod._mem["signals"] = []
 
@@ -2242,6 +2247,50 @@ def test_thin_liquidity_band():
             check_true(f"{chain}/{tier} floor at $10k", floor >= 10_000)
 
 
+def test_mute_reason_names_itself():
+    """
+    On 29 August the record said "muted:cooloff" for MU at 69/100, which ran
+    +5,072%. The cooloff had already been removed. The label was hardcoded
+    and threw away which condition actually fired, so the position cap
+    silenced three signals above every floor — MU, VAULT at 71 and GG at 61 —
+    while the record blamed a rule that no longer existed.
+    """
+    import scan, store as store_mod, time as _t, inspect
+    print("\nmute reason")
+
+    store_mod._mem["signals"] = []
+    s = store_mod.Store(url="", key="")
+    now = _t.time()
+
+    # Below the cap, nothing is muted.
+    s.insert("signals", [{"ca": f"p{i}", "chain": "solana",
+                          "outcome": "pending", "alerted_at": now}
+                         for i in range(10)])
+    blocked, why = scan.portfolio_blocked()
+    check_true("a normal position count does not mute", not blocked)
+
+    store_mod._mem["signals"] = []
+    s.insert("signals", [{"ca": f"q{i}", "chain": "solana",
+                          "outcome": "pending", "alerted_at": now}
+                         for i in range(config.WATCH["max_open_positions"] + 5)])
+    blocked, why = scan.portfolio_blocked()
+    check_true("over the cap does mute", blocked)
+    check_true("and says which condition", "position_cap" in why)
+    check_true("not a rule that no longer exists", "cooloff" not in why)
+
+    # The label must come from the condition, not a constant.
+    src = inspect.getsource(scan.scan_chain)
+    check_true("the reason is carried through, not assumed",
+               "mute_reason" in src)
+
+    # The cap is about the watcher's runtime, not a wallet. The watcher
+    # batches thirty addresses per request.
+    check_true("the cap is a few batched requests, not one",
+               config.WATCH["max_open_positions"] >= 60)
+
+    store_mod._mem["signals"] = []
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2365,6 +2414,7 @@ def main():
     test_venue_effects()
     test_liquidity_floor_not_tiers()
     test_thin_liquidity_band()
+    test_mute_reason_names_itself()
 
     print("\n" + "=" * 64)
     print(f"  {PASS} passed, {FAIL} failed")

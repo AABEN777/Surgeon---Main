@@ -203,7 +203,9 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                     continue
                 if not ev.should_alert:
                     already[ca] = time.time()
-                    store.record_signal(ev, adapter, sent_ok=False)
+                    store.record_signal(
+                        ev, adapter, sent_ok=False,
+                        send_error=f"below_floor:{ev.conviction.score}")
                     store.drop_from_watchlist(ca)
                     outcomes["tracked_only"] = outcomes.get("tracked_only", 0) + 1
                     continue
@@ -214,15 +216,23 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                          float(row.get("first_age_hours") or 0),
                          float(row.get("_age_now") or market.age_hours))
 
-                sent_ok = False
-                if not dry_run:
+                sent_ok, send_error = False, ""
+                if dry_run:
+                    send_error = "dry_run"
+                else:
                     res = alerts.send_signal(ev, adapter)
                     sent_ok = res.ok
+                    if not res.ok:
+                        send_error = res.error or "unknown"
+                        log.warning("[%s] SEND FAILED for revived %s "
+                                    "(%d/100): %s", chain, market.symbol,
+                                    ev.conviction.score, send_error)
                 # Mark it handled either way. Recording only on a successful
                 # send meant a dry run could revive a token and then signal
                 # the same token again minutes later in the same pass.
                 already[ca] = time.time()
-                store.record_signal(ev, adapter, sent_ok=sent_ok)
+                store.record_signal(ev, adapter, sent_ok=sent_ok,
+                                    send_error=send_error)
                 store.drop_from_watchlist(ca)
                 revived[chain] = revived.get(chain, 0) + 1
                 outcomes["revived"] += 1
@@ -329,13 +339,29 @@ def scan_social_calls(dry_run: bool, already: dict[str, float],
                          ev.conviction.score, len(ev.called_by),
                          ", ".join(ev.called_by[:4]))
 
-                sent_ok = False
-                if ev.should_alert and not dry_run:
-                    sent_ok = alerts.send_signal(ev, adapter).ok
+                # Every path that records a signal must record why it did
+                # not send. Two of the three did not, which is how a token
+                # came back as "(nothing recorded)" and looked like it
+                # predated the column rather than having taken a route that
+                # never set it.
+                sent_ok, send_error = False, ""
+                if not ev.should_alert:
+                    send_error = f"below_floor:{ev.conviction.score}"
+                elif dry_run:
+                    send_error = "dry_run"
+                else:
+                    res = alerts.send_signal(ev, adapter)
+                    sent_ok = res.ok
+                    if not res.ok:
+                        send_error = res.error or "unknown"
+                        log.warning("[%s] SEND FAILED for called %s "
+                                    "(%d/100): %s", chain, market.symbol,
+                                    ev.conviction.score, send_error)
                 if ev.should_alert:
                     stats["alerted"] += 1
                 already[ca] = time.time()
-                store.record_signal(ev, adapter, sent_ok=sent_ok)
+                store.record_signal(ev, adapter, sent_ok=sent_ok,
+                                    send_error=send_error)
 
             except Exception as e:
                 log.warning("social call %s failed: %s", str(ca)[:12], e)
@@ -357,7 +383,7 @@ def portfolio_blocked() -> tuple[bool, str]:
     open_now = store.open_positions()
     cap = config.WATCH["max_open_positions"]
     if len(open_now) >= cap:
-        return True, f"tracking {len(open_now)}/{cap} positions"
+        return True, f"position_cap:{len(open_now)}/{cap}"
 
     if not config.WATCH["cooloff_losses"] or not config.WATCH["cooloff_minutes"]:
         return False, ""
@@ -435,7 +461,8 @@ def scan_chain(chain: str, social_counts: dict[str, float],
                already: dict[str, float] | None = None,
                macro: str = "NEUTRAL",
                hot_meta: dict | None = None,
-               alerts_muted: bool = False) -> ChainRun:
+               alerts_muted: bool = False,
+               mute_reason: str = "") -> ChainRun:
     run = ChainRun(chain=chain)
     adapter = chains.get_adapter(chain)
     already = already if already is not None else {}
@@ -534,7 +561,11 @@ def scan_chain(chain: str, social_counts: dict[str, float],
             # only the higher bar reaches Telegram.
             if not ev.should_alert or alerts_muted:
                 run.tracked_only += 1
-                reason = ("muted:cooloff" if alerts_muted
+                # The label used to say "cooloff" whichever condition
+                # fired, which sent us hunting a rule that had already been
+                # removed while the position cap quietly silenced a token
+                # that ran +5,072%.
+                reason = (f"muted:{mute_reason or 'unknown'}" if alerts_muted
                           else f"below_floor:{ev.conviction.score}")
                 log.info("[%s] track %s (%s) %s %d/100",
                          chain, market.name, market.symbol,
@@ -655,7 +686,8 @@ def main() -> int:
         try:
             runs.append(scan_chain(chain, social_counts, args.dry_run,
                                    args.limit, already, macro, hot_meta,
-                                   alerts_muted=blocked))
+                                   alerts_muted=blocked,
+                                   mute_reason=why))
         except Exception as e:
             log.error("[%s] scan crashed: %s", chain, e)
 
