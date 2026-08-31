@@ -138,6 +138,10 @@ def main() -> int:
         res = alerts.send(text)
         print("\nsent" if res.ok else f"\nsend failed: {res.error}")
 
+    # Non-zero for a command line or an external scheduler that wants to
+    # act on it. The GitHub workflow deliberately tolerates this, so a red
+    # run there means the watchdog broke rather than that Surgeon is
+    # unhealthy — the Telegram message carries that.
     return 1 if problems else 0
 
 

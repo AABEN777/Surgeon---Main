@@ -242,6 +242,41 @@ clean data in a few days.
 Second time in two days a rule of mine has caused the problem it was written
 to prevent.
 
+## The rug fix broke every exit
+
+The confirmation counter never persisted. `note_missed_check` called `_req`
+with `json=` when it takes `body=`, which raised TypeError into a bare
+except that logged a warning and carried on.
+
+So every check read 0, incremented to 1, and saved nothing. No position could
+ever reach the threshold, which meant **nothing closed at all** — not stale
+positions, not real liquidity drains, not dev-sold. King spotted both halves:
+a position open 10.1 hours, and genuine rugs no longer being marked.
+
+Three fixes:
+
+- the keyword is right, and a failure now logs at error level rather than
+  warning, because a counter that silently fails to persist stops the
+  watcher dead
+- a position past its maximum hold closes on schedule even with no price
+  data. Time does not stop because the feed did, and a token DexScreener has
+  quietly dropped could otherwise live in the open set forever
+- the Alive workflow no longer goes red when it finds a problem. That was
+  ambiguous with the watchdog itself breaking, and King could not tell them
+  apart from the Actions tab. The Telegram message is the alert; a red run
+  now means the watchdog is broken
+
+Checked the repo for the same class of bug — wrong keywords into `_req`
+anywhere, and exception handlers broad enough to hide a persistent failure.
+Neither found elsewhere.
+
+Third time in three days a protective rule of mine has caused the problem it
+was written to prevent: the circuit breaker manufacturing an outage, the
+mute label hiding its own cause, and now rug confirmation stopping every
+exit. The pattern is that each one failed silently — the code kept running
+and reported something plausible. Worth preferring a loud failure to a
+graceful one in anything on the critical path.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

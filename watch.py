@@ -294,6 +294,24 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
             if needed:
                 missed += 1
                 if missed < needed:
+                    # Time does not stop just because the price feed did. A
+                    # position past its maximum hold closes on schedule even
+                    # when we cannot read it — otherwise a token DexScreener
+                    # has quietly dropped lives in the open set forever, and
+                    # that is exactly what happened: one sat at 10.1 hours.
+                    held_h = (time.time()
+                              - float(row.get("alerted_at") or 0)) / 3600
+                    if held_h >= config.WATCH["max_hold_hours"]:
+                        store.close_position(
+                            ca, "LOSS", "MAX_HOLD",
+                            final_pnl=float(row.get("final_pnl") or 0),
+                            peak_pnl=float(row.get("peak_pnl") or 0))
+                        res.closed += 1
+                        res.fire("MAX_HOLD")
+                        log.info("[%s] %s held %.1fh with no price data — "
+                                 "closed on time", chain, ca[:10], held_h)
+                        continue
+
                     store.note_missed_check(ca, missed)
                     res.unavailable = getattr(res, "unavailable", 0) + 1
                     log.info("[%s] %s %s (%d/%d) — holding, not closing",

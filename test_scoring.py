@@ -2535,6 +2535,81 @@ def test_arc_ready_when_enabled():
                "arc" not in config.enabled_chains())
 
 
+def test_missed_counter_persists():
+    """
+    The counter is what makes rug confirmation work, and it was silently
+    failing: note_missed_check called _req with json= when it takes body=,
+    which raised TypeError into a bare except that logged a warning.
+
+    Every check read 0, incremented to 1, and saved nothing — so no position
+    could ever reach the threshold. Nothing closed at all: not stale
+    positions, not real rugs, not dev-sold. One sat open for 10.1 hours.
+
+    Two protections now. The keyword is right, and a position past its
+    maximum hold closes on schedule even with no price data, so a token the
+    feed has quietly dropped cannot live in the open set forever.
+    """
+    import store as store_mod, watch, chain_base, inspect, time as _t
+    print("\nmissed counter")
+
+    src = inspect.getsource(store_mod.Store.note_missed_check)
+    check_true("the payload keyword matches _req", "body={" in src)
+    check_true("and json= is gone", "json={" not in src)
+    check_true("a failure is logged loudly", "log.error" in src)
+
+    now = _t.time()
+    real = chain_base.dexscreener_markets
+
+    def fresh(age_hours):
+        store_mod._mem["signals"] = [{
+            "ca": "0xAAA", "chain": "base", "name": "T", "symbol": "T",
+            "outcome": "pending", "entry_price": 1.0, "peak_price": 1.4,
+            "alerted_at": now - age_hours * 3600, "liquidity_usd": 40000,
+            "alert_sent": True, "missed_checks": 0, "peak_pnl": 40}]
+
+    def tick(markets):
+        chain_base.dexscreener_markets = lambda cas, chain, cid: markets
+        rows = [r for r in store_mod._mem["signals"]
+                if r["outcome"] == "pending"]
+        if rows:
+            watch.watch_chain("base", rows, dry_run=True)
+        return store_mod._mem["signals"][0]
+
+    try:
+        fresh(1)
+        check("first miss is recorded", tick({})["missed_checks"], 1)
+        check("second miss accumulates", tick({})["missed_checks"], 2)
+        check_true("the third closes it", tick({})["outcome"] != "pending")
+
+        # Time does not stop because the price feed did.
+        fresh(config.WATCH["max_hold_hours"] + 2)
+        row = tick({})
+        check("a stale position closes on time", row["exit_type"], "MAX_HOLD")
+
+        # And the real exits still work.
+        fresh(1)
+        drained = {"0xAAA": TokenMarket(ca="0xAAA", chain="base", name="T",
+                                        symbol="T", price_usd=0.9,
+                                        liquidity_usd=8000, fdv=90000,
+                                        volume_1h=20000, volume_5m=1500,
+                                        dex="uniswap")}
+        check("a genuine drain still fires",
+              tick(drained)["exit_type"], "LIQUIDITY_DRAIN")
+
+        fresh(1)
+        live = {"0xAAA": TokenMarket(ca="0xAAA", chain="base", name="T",
+                                     symbol="T", price_usd=1.35,
+                                     liquidity_usd=42000, fdv=90000,
+                                     volume_1h=25000, volume_5m=2000,
+                                     dex="uniswap")}
+        row = tick(live)
+        check("a healthy position is untouched", row["outcome"], "pending")
+        check("and its counter stays clear", row["missed_checks"], 0)
+    finally:
+        chain_base.dexscreener_markets = real
+        store_mod._mem["signals"] = []
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2662,6 +2737,7 @@ def main():
     test_thin_liquidity_band()
     test_mute_reason_names_itself()
     test_rug_needs_confirmation()
+    test_missed_counter_persists()
     test_unverified_held_for_recheck()
 
     print("\n" + "=" * 64)

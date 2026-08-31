@@ -291,11 +291,20 @@ class Store:
                     row["missed_checks"] = count
             return
         try:
-            self._req("PATCH", "signals", params={
-                "ca": f"eq.{ca}", "outcome": "eq.pending"},
-                json={"missed_checks": count})
+            # body=, not json= — _req takes the payload as `body`. Getting
+            # this wrong raised TypeError into the except below, which logged
+            # a warning and moved on, so the counter never persisted: every
+            # check read 0, incremented to 1, and saved nothing. Positions
+            # could never reach the confirmation threshold, so nothing ever
+            # closed — not stale positions, not real rugs.
+            self._req("PATCH", "signals",
+                      params={"ca": f"eq.{ca}", "outcome": "eq.pending"},
+                      body={"missed_checks": count})
         except Exception as e:
-            log.warning("note_missed_check %s failed: %s", ca[:10], e)
+            # Loud, because a counter that silently fails to persist means
+            # positions never close at all.
+            log.error("note_missed_check %s FAILED (%s) — positions cannot "
+                      "close while this is broken", ca[:10], e)
 
     def close_position(self, ca: str, outcome: str, exit_type: str,
                        final_pnl: float, peak_pnl: float = 0.0):
