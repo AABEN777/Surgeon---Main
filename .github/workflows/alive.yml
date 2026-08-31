@@ -46,7 +46,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # A red run here used to mean two different things — "Surgeon is
+      # unhealthy" and "the watchdog itself broke" — and there was no way to
+      # tell them apart from the Actions tab. The Telegram message is the
+      # alert; this step only fails if alive.py cannot run at all.
       - name: Check Surgeon is alive
         run: |
           python3 alive.py --send \
-            ${{ inputs.force && '--force' || '' }}
+            ${{ inputs.force && '--force' || '' }} \
+            || echo "watchdog reported problems — see the Telegram message"
