@@ -254,6 +254,22 @@ class Store:
             "dev_held":        (s.creator_holds_pct or 0) > 0.01,
             "top_holder_pct":  s.top_holder_pct,
             "lp_locked_pct":   s.lp_locked_pct,
+
+            # Everything below is computed on every signal and was being
+            # discarded. Six of the ten items in RESEARCH.md could not be
+            # tested against King's own trades for want of these, and three
+            # rules that already shipped — unproven, clusters, LP_PULLABLE —
+            # could never be verified either. Cheap to keep, impossible to
+            # reconstruct afterwards.
+            "holder_count":        s.holder_count,
+            "top10_pct":           s.top10_pct,
+            "insider_pct":         s.insider_pct,
+            "lp_top_unlocked_pct": s.lp_top_unlocked_pct,
+            "cluster_wallets":     s.cluster_wallets,
+            "volume_1h":           m.volume_1h,
+            "volume_5m":           m.volume_5m,
+            "buys_5m":             m.buys_5m,
+            "sells_5m":            m.sells_5m,
             "safety_sources":  ",".join(s.sources),
             "unavailable":     ",".join(s.unavailable),
             "breakdown":       c.explain(),

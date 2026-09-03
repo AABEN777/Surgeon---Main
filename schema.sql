@@ -165,6 +165,21 @@ alter table bot_state    enable row level security;
 alter table token_buyers enable row level security;
 
 
+-- ── token_clusters ───────────────────────────────────────────────
+-- Wallets seeded by one address before trading opened, cached permanently.
+-- Transfer history never changes, and the explorers that serve it return 429
+-- after a handful of calls — so this is fetched once per token and reused.
+create table if not exists token_clusters (
+  ca         text not null,
+  chain      text not null,
+  wallets    integer default 0,
+  supply_pct double precision default 0,
+  how        text,
+  primary key (ca, chain)
+);
+
+alter table token_clusters enable row level security;
+
 -- ── columns added after the first release, part two ──────────────
 -- How many consecutive checks have failed to see a token. Absence is only
 -- evidence when it repeats: "DexScreener returned nothing" and "the pool is
@@ -175,6 +190,26 @@ alter table signals   add column if not exists missed_checks integer default 0;
 -- Why a token is parked. "too_young" ages into its gates; "unverified" is
 -- waiting for a safety source to answer.
 alter table watchlist add column if not exists park_reason text default 'too_young';
+
+
+-- ── fields kept so the research can be tested ────────────────────
+-- All nine are computed on every signal and were being discarded. Six of the
+-- ten items in RESEARCH.md could not be checked against real trades without
+-- them, and three rules that already shipped could never be verified.
+-- Why an alert did not arrive. "alert_sent: false" covered two different
+-- situations — below the floor, and tried and failed — which made a signal
+-- that peaked +2,371% indistinguishable from one correctly filtered.
+alter table signals add column if not exists send_error          text;
+
+alter table signals add column if not exists holder_count        integer;
+alter table signals add column if not exists top10_pct           double precision;
+alter table signals add column if not exists insider_pct         double precision;
+alter table signals add column if not exists lp_top_unlocked_pct double precision;
+alter table signals add column if not exists cluster_wallets     integer;
+alter table signals add column if not exists volume_1h           double precision;
+alter table signals add column if not exists volume_5m           double precision;
+alter table signals add column if not exists buys_5m             integer;
+alter table signals add column if not exists sells_5m            integer;
 
 -- ── row level security ───────────────────────────────────────────
 -- Surgeon connects with the service key, which bypasses RLS. These
