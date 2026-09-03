@@ -277,6 +277,38 @@ exit. The pattern is that each one failed silently — the code kept running
 and reported something plausible. Worth preferring a loud failure to a
 graceful one in anything on the critical path.
 
+## Correcting myself on what the rug bug touched
+
+I told King the false-rug bug did not affect win rate, and used that to
+justify keeping decisions made from contaminated data. That was wrong.
+
+A falsely rugged token is recorded as `LOSS` at -100%. It stays in the
+denominator and counts against the group. So any cohort DexScreener indexed
+poorly had **both** an inflated rug rate and a depressed win rate — and the
+"re-tested on win rate alone" audit was not the clean check I presented it
+as.
+
+Two consequences.
+
+**The alert floor moved 50 -> 40.** On the 48 hours since the fix, the 40-49
+band wins 46.4% [39.6-53.4] across 196 trades, against the 46.4% currently
+reaching the phone across 561. The real break is now below 40, where 30-39
+wins 30.9% [25.6-36.8]. Contamination understates win rates, so 46.4% is a
+floor on the truth rather than a ceiling — the direction of this change is
+safe even if the magnitude shifts.
+
+**pons-v2 is no longer blocked.** If every one of its 51 recorded rugs were
+false and those tokens won at the population rate, it lands near 43% —
+indistinguishable from uniswap. The block cannot be defended on that data.
+
+And a block generates no data at all, so it could never be tested: a
+decision that confirms itself. Downgraded to -30, which keeps almost
+everything below the floor while the tokens are still tracked and graded.
+In a week there will be clean numbers to judge it on.
+
+The general lesson: prefer a penalty to a veto when the evidence is thin,
+because a penalty keeps learning and a veto stops.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

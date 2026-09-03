@@ -315,8 +315,21 @@ SAFETY = {
 # and 14%, so 58 trades is enough. uniswap and pumpswap sit on the baseline
 # on 1,459 and 592 trades and are deliberately absent.
 VENUES = {
-    # blocked outright: 5.2% win, 87.9% rug across 58 trades
-    "pons-v2":              {"block": True},
+    # Was blocked outright on 5.2% win / 87.9% rug across 58 trades. Both
+    # numbers came from data the false-rug bug had corrupted, and I was wrong
+    # to tell King win rate was unaffected: a falsely rugged token is
+    # recorded as a loss at -100%, so a venue DexScreener indexed poorly
+    # would show a depressed win rate as well as an inflated rug rate.
+    #
+    # If every one of those 51 rugs were false and those tokens won at the
+    # population rate, pons-v2 lands near 43% — indistinguishable from
+    # uniswap. The block cannot be defended on that data.
+    #
+    # Worse, a block generates no data at all, so it could never be tested.
+    # Downgraded to a heavy penalty: almost everything stays below the floor,
+    # but tokens are tracked and graded, and in a week there will be clean
+    # numbers to judge it on.
+    "pons-v2":              {"conviction": -30},
 
     # Win rates whose upper bound sits below the baseline. These were first
     # set from rug rate, but rug rate was contaminated: "DexScreener returned
@@ -475,15 +488,22 @@ CONVICTION = {
     # Still tracked, so the outcome data keeps building.
     "block_weak_momentum": True,
 
-    # Aligned to where outcomes actually split. Across 787 closed trades over
-    # two days the 30-39 band won 32.4% and 40-49 won 31.4%, while 50-59 won
-    # 42.1% and everything above held at 41-42%. That is a ten point step at
-    # 50, not the flat plateau the score used to show — so every tier sits
-    # there rather than at three different guesses.
+    # The step moved once the data was clean.
+    #
+    # It sat at 50 when 40-49 won 31.4%. On the 48 hours after the false-rug
+    # fix that band wins 46.4% [39.6-53.4] across 196 trades — the same as
+    # the 46.4% currently reaching the phone across 561. The real break is
+    # now below 40: the 30-39 band wins 30.9% [25.6-36.8] and does not
+    # overlap it.
+    #
+    # The earlier reading was not wrong, it was measured through a bug. A
+    # falsely rugged token is recorded as a loss at -100%, so every group
+    # carrying false rugs had its win rate understated — which also means
+    # 46.4% is a floor on the truth here, not a ceiling.
     "min_to_alert_by_tier": {
-        "boosted":     50,
-        "first_moon":  50,
-        "second_moon": 50,
+        "boosted":     40,
+        "first_moon":  40,
+        "second_moon": 40,
     },
     # Channel calls are not gated on this score at all. Conviction is
     # calibrated for fresh launches — it docks a 28h-old token for being old

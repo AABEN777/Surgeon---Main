@@ -1208,8 +1208,7 @@ def test_per_tier_alert_floors():
     # it, 41-42% above, on 787 trades — the tiers no longer need separate
     # numbers, and three guesses became one measurement.
     floors = config.CONVICTION["min_to_alert_by_tier"]
-    check_true("boosted is no longer muted",
-               floors["boosted"] <= 50)
+    check_true("boosted is no longer muted", floors["boosted"] <= 50)
     check_true("no tier is held to a higher bar than another",
                len(set(floors.values())) == 1)
     check_true("the default is below the old single floor of 60",
@@ -2122,7 +2121,11 @@ def test_alert_floors_aligned():
     print("\nalert floors")
     floors = config.CONVICTION["min_to_alert_by_tier"]
     check_true("every tier uses the same floor", len(set(floors.values())) == 1)
-    check("and it sits at the step", set(floors.values()), {50})
+    # The step moved from 50 to 40 once the false-rug bug stopped recording
+    # healthy tokens as losses at -100%. Contamination understated win rates,
+    # and the 40-49 band came back at 46.4% — the same as what was already
+    # being sent.
+    check("and it sits at the step", set(floors.values()), {40})
     check_true("still above the tracking floor",
                min(floors.values()) > config.CONVICTION["min_to_track"])
 
@@ -2163,9 +2166,21 @@ def test_venue_effects():
                          honeypot=False)
         return scoring.evaluate(m, s, "base")
 
+    # pons-v2 was blocked outright on 5.2% win / 87.9% rug, both measured
+    # through the false-rug bug. A falsely rugged token is recorded as a loss
+    # at -100%, so a venue DexScreener indexed poorly showed a depressed win
+    # rate as well as an inflated rug rate — and if all 51 of those rugs were
+    # false, pons-v2 lands near 43%, indistinguishable from uniswap.
+    #
+    # It is now a heavy penalty rather than a block, because a block produces
+    # no data and so can never be tested. It is a decision that confirms
+    # itself.
     dead = ev("pons-v2")
-    check("a venue that rugs 88% of listings is rejected",
-          dead.rejected_by, "venue")
+    check_true("the worst venue is silent", not dead.should_alert)
+    check_true("but still tracked, so it can be judged later",
+               dead.should_track)
+    check_true("and no venue is blocked outright",
+               not any(r.get("block") for r in config.VENUES.values()))
 
     neutral = ev("uniswap").conviction.score
     check_true("a venue on the baseline scores neutrally",
