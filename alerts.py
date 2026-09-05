@@ -238,9 +238,18 @@ WATCH_HEADERS = {
     "VOLUME_FADE":  ("📉", "VOLUME FADING"),
     "DEV_SOLD":     ("🚨", "DEV WALLET SOLD"),
     "LIQUIDITY_DRAIN": ("🚨", "LIQUIDITY LEAVING"),
+    # The pool is gone, not a stop being hit. This was being sent under the
+    # STOP_LOSS header, so the title and the detail line disagreed.
+    "RUGGED":       ("💀", "LIQUIDITY GONE"),
     "WHALE_STOP":   ("🐋", "WHALE APPEARED"),
     "SAFETY_RECHECK": ("🔍", "SAFETY DATA ARRIVED"),
+    "SAFETY_BLOCK": ("🛑", "SAFETY DATA WOULD HAVE BLOCKED THIS"),
     "TIME_STOP":    ("⏰", "TIME STOP"),
+    # Both were emitted with no header defined, so they would have rendered
+    # through whatever fallback format_watch uses — the same fault as RUGGED,
+    # just in paths that had not fired yet.
+    "MAX_HOLD":     ("⏳", "MAX HOLD REACHED"),
+    "DATA_ERROR":   ("❓", "DATA UNAVAILABLE"),
     "GRADUATION":   ("🎓", "GRADUATING"),
 }
 

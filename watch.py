@@ -322,8 +322,10 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
                 res.closed += 1
                 res.fire("RUGGED")
                 if not dry_run and row.get("alert_sent"):
+                    # RUGGED, not STOP_LOSS. The header said one thing and
+                    # the detail said another, which made the alert unreadable.
                     alerts.send(alerts.format_watch(
-                        "STOP_LOSS", row.get("name") or ca[:10], ca, -100.0,
+                        "RUGGED", row.get("name") or ca[:10], ca, -100.0,
                         adapter,
                         f"liquidity gone — confirmed over {missed} checks"))
                 continue

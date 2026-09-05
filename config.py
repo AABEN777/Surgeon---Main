@@ -755,7 +755,13 @@ WATCH = {
     # every timeout wrote -100% into the outcome data — and during their
     # outage there were dozens an hour.
     "rug_confirmations_no_data":  3,   # 15 minutes of silence
-    "rug_confirmations_empty":    2,   # 10 minutes of a genuinely empty pool
+    # Was 2. A live Robinhood pool read empty for ten minutes, was closed as
+    # rugged at -100%, and then recovered — it was re-discovered, signalled
+    # again and ran to TP3. DexScreener reporting zero liquidity on a pool
+    # that still exists is the same glitch that caused the false rugs, just
+    # in a different field, and ten minutes was not long enough to tell them
+    # apart. A pool that is genuinely drained stays drained.
+    "rug_confirmations_empty":    4,   # 20 minutes of a pool reading empty
     "max_open_positions":    90,  # tracking cap
     # Removed. Inherited from the autonomous version, where pausing after
     # losses protected capital that was actually being spent. Signal-only it

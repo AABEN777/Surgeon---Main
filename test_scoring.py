@@ -2368,9 +2368,18 @@ def test_rug_needs_confirmation():
         check("a recovered token stays open", row["outcome"], "pending")
         check("and its miss count resets", row["missed_checks"], 0)
 
-        check_true("silence needs more confirmation than an empty pool",
-                   config.WATCH["rug_confirmations_no_data"]
-                   > config.WATCH["rug_confirmations_empty"])
+        # This originally asserted that silence needed more confirmation than
+        # an empty pool, on the reasoning that "no data" is weaker evidence
+        # than "the API answered and the pool is empty".
+        #
+        # A live pool proved that wrong: it read empty for ten minutes, was
+        # closed at -100%, and recovered. DexScreener reporting zero
+        # liquidity on a pool that still exists is not stronger evidence at
+        # all — it is the same glitch in a different field. Both now need
+        # real time, and the empty case needs more.
+        check_true("both kinds of absence need confirming",
+                   config.WATCH["rug_confirmations_no_data"] >= 3
+                   and config.WATCH["rug_confirmations_empty"] >= 3)
     finally:
         chain_base.dexscreener_markets = real
         store_mod._mem["signals"] = []
@@ -2872,6 +2881,57 @@ def test_preflight_refuses_broken_storage():
                "PREFLIGHT FAILED" in main_src)
 
 
+def test_every_watch_event_has_a_header():
+    """
+    A RUGGED close was sent under the STOP_LOSS header, so the title said
+    "STOP LOSS" while the detail said "liquidity gone". The alert contradicted
+    itself, and MAX_HOLD and DATA_ERROR had no header at all — the same fault
+    in paths that had not fired yet.
+    """
+    import alerts, watch, inspect, re
+    print("\nwatch event headers")
+
+    src = inspect.getsource(watch)
+    emitted = set(re.findall(r'out\.append\(\("(\w+)"', src))
+    emitted |= set(re.findall(r'res\.fire\("(\w+)"\)', src))
+    emitted |= set(re.findall(r'format_watch\(\s*\n?\s*"(\w+)"', src))
+
+    check_true("the watcher emits something", len(emitted) > 8)
+    check("every emitted event has a header",
+          sorted(e for e in emitted if e not in alerts.WATCH_HEADERS), [])
+    check("every terminal event has one too",
+          sorted(e for e in watch.TERMINAL if e not in alerts.WATCH_HEADERS), [])
+
+    # And a rug must not be announced as a stop.
+    rug_send = [l for l in src.splitlines()
+                if "liquidity gone" in l or "confirmed over" in l]
+    check_true("the rug alert exists", rug_send)
+    idx = src.index("liquidity gone")
+    window = src[max(0, idx - 400):idx]
+    check_true("and is sent under RUGGED, not STOP_LOSS",
+               '"RUGGED"' in window and window.rindex('"RUGGED"')
+               > window.rindex('"STOP_LOSS"') if '"STOP_LOSS"' in window
+               else '"RUGGED"' in window)
+
+
+def test_empty_pool_needs_longer():
+    """
+    A live Robinhood pool read empty for ten minutes, was closed as rugged at
+    -100%, then recovered — it was re-discovered, signalled again, and ran to
+    TP3. DexScreener reporting zero liquidity on a pool that still exists is
+    the same glitch that caused the false rugs, in a different field.
+
+    A pool that is genuinely drained stays drained, so waiting longer costs
+    almost nothing and a false -100% costs a real position.
+    """
+    print("\nempty pool confirmation")
+    W = config.WATCH
+    check_true("an empty pool needs at least twenty minutes",
+               W["rug_confirmations_empty"] >= 4)
+    check_true("and missing data still needs its own confirmation",
+               W["rug_confirmations_no_data"] >= 3)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -3002,6 +3062,8 @@ def main():
     test_thin_liquidity_band()
     test_mute_reason_names_itself()
     test_rug_needs_confirmation()
+    test_every_watch_event_has_a_header()
+    test_empty_pool_needs_longer()
     test_missed_counter_persists()
     test_unverified_held_for_recheck()
 
