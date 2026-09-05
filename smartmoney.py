@@ -15,7 +15,7 @@ import logging
 from typing import Optional
 
 import config
-from chain_base import http_get, safe_float
+from chain_base import http_get, safe_float, as_dict
 
 log = logging.getLogger("surgeon.smartmoney")
 
@@ -139,8 +139,8 @@ def macro_regime() -> str:
              if p.get("chainId") == "solana"]
     if pairs:
         deepest = max(pairs, key=lambda p: safe_float(
-            (p.get("liquidity") or {}).get("usd")))
-        chg = safe_float((deepest.get("priceChange") or {}).get("h24"))
+            as_dict(p.get("liquidity")).get("usd")))
+        chg = safe_float(as_dict(deepest.get("priceChange")).get("h24"))
         if chg >= 6:
             regime = "BULLISH"
         elif chg <= -12:

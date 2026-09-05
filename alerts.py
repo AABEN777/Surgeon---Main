@@ -22,6 +22,7 @@ from typing import Optional
 import requests
 
 import config
+from chain_base import as_dict
 
 log = logging.getLogger("surgeon.alerts")
 
@@ -308,14 +309,14 @@ def send(text: str, chat_id: Optional[str] = None,
             if data.get("ok"):
                 _last_send = time.time()
                 return SendResult(True,
-                                  message_id=(data.get("result") or {}).get("message_id"))
+                                  message_id=as_dict(data.get("result")).get("message_id"))
 
             desc = data.get("description", "unknown error")
             # 429 carries retry_after; anything 4xx other than that is our bug
             if r.status_code == 429:
                 # Telegram states how long to wait. Honour it rather than
                 # burning an attempt and dropping the message.
-                wait = (data.get("parameters") or {}).get("retry_after", 5)
+                wait = as_dict(data.get("parameters")).get("retry_after", 5)
                 log.warning("telegram rate limited, waiting %ss", wait)
                 time.sleep(float(wait) + 0.5)
                 _last_send = time.time()

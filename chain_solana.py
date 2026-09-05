@@ -14,6 +14,7 @@ from typing import Optional
 import config
 import logging
 from chain_base import (
+    as_dict,
     as_list,
     is_solana_infrastructure, solana_pool_accounts,
     ChainAdapter, SafetyReport, CreatorActivity,
@@ -29,6 +30,53 @@ HELIUS_TX = "https://api.helius.xyz/v0/addresses/{addr}/transactions"
 BONDING_CURVE_MARKETS = {"pump_fun_amm", "pumpfun", "moonshot", "bonk_curve"}
 
 CREATOR_RUG_PATTERNS = ("rugged", "creator history", "previous rug")
+
+
+
+def _read_risk_score(data: dict) -> tuple:
+    """
+    (score, scale, block_threshold) from a RugCheck report.
+
+    Returns (None, None, None) when there is no usable number. That matters:
+    the previous version ran every value through safe_float, which turns
+    anything unparseable into 0.0 — and 0 on the 0-100 scale grades as a
+    perfect score. A malformed response would have read as clean.
+    """
+    def number(v):
+        # bool is a subclass of int, so float(True) is 1.0 — a boolean would
+        # have read as a clean score. Same shape as the string case: garbage
+        # arriving as something plausible rather than as nothing.
+        if v is None or isinstance(v, bool):
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        # NaN fails every comparison, so this rejects it too.
+        return f if f >= 0 else None          # a negative is not a score
+
+    legacy = number(data.get("score"))
+    normalised = number(data.get("score_normalised",
+                                 data.get("score_normalized")))
+
+    if legacy is None and normalised is None:
+        return None, None, None
+
+    # A legacy score runs into the thousands; a normalised one never passes
+    # 100. Whichever field carries the large number is the legacy scale.
+    #
+    # Exactly 100 is ambiguous — it could be a clean legacy score or a
+    # maximum-risk normalised one. It falls through to normalised, which
+    # rejects it. That is the conservative reading and the right way round:
+    # wrongly skipping one clean token costs less than admitting one that
+    # scores maximum risk.
+    for value in (legacy, normalised):
+        if value is not None and value > 100:
+            return value, "rugcheck:legacy", config.SAFETY["rugcheck_raw_block"]
+
+    value = normalised if normalised is not None else legacy
+    return (value, "rugcheck:normalised",
+            config.SAFETY["rugcheck_normalised_block"])
 
 
 class SolanaAdapter(ChainAdapter):
@@ -55,7 +103,7 @@ class SolanaAdapter(ChainAdapter):
         if data.get("rugged") is True:
             rep.hard_rejects.append("rugged")
 
-        token = data.get("token") or {}
+        token = as_dict(data.get("token"))
         mint_auth = token.get("mintAuthority")
         freeze_auth = token.get("freezeAuthority")
         rep.mint_authority = bool(mint_auth) and mint_auth != "null"
@@ -66,14 +114,19 @@ class SolanaAdapter(ChainAdapter):
             rep.hard_rejects.append("freeze_authority_active")
 
         # -- raw risk score ---------------------------------------
-        score = data.get("score")
-        if score is None:
+        # RugCheck serves two scores and changed which one `score` carries.
+        # The legacy scale runs into the thousands; score_normalised is
+        # 0-100. Reading only `score` meant every token came back as 1 once
+        # they switched, and a block set at 500 could never fire again — the
+        # check was silently dead, the same way the unproven rule was.
+        #
+        # Both are read, and the threshold follows whichever scale the number
+        # is actually on rather than an assumption about the field name.
+        rep.risk_raw, rep.risk_scale, rep.risk_block_at = _read_risk_score(data)
+        if rep.risk_raw is None:
             rep.unavailable.append("risk_raw")
-        else:
-            rep.risk_raw = safe_float(score)
-            rep.risk_scale = "rugcheck:lower_is_safer"
-            if rep.risk_raw > config.SAFETY["rugcheck_raw_block"]:
-                rep.hard_rejects.append(f"risk_score_{rep.risk_raw:g}")
+        elif rep.risk_raw > rep.risk_block_at:
+            rep.hard_rejects.append(f"risk_score_{rep.risk_raw:g}")
 
         # -- danger flags -----------------------------------------
         risks = data.get("risks") or []
@@ -128,9 +181,16 @@ class SolanaAdapter(ChainAdapter):
         rep.holder_count = safe_int(data.get("totalHolders")) or None
 
         # -- LP lock, graduated pools only ------------------------
-        markets = data.get("markets")
-        if markets is None:
+        # as_list, not a bare get: a string is truthy and iterates into
+        # characters, so the first .get() raises. RugCheck returning a
+        # malformed markets field crashed the whole safety check, and no test
+        # caught it because none of them ran a live adapter against garbage.
+        raw_markets = data.get("markets")
+        markets = as_list(raw_markets)
+        if raw_markets is None or (raw_markets and not markets):
             rep.unavailable.append("lp_locked_pct")
+        if not markets:
+            pass
         else:
             graduated = [m for m in markets
                          if (m.get("marketType") or "") not in BONDING_CURVE_MARKETS]
@@ -140,7 +200,7 @@ class SolanaAdapter(ChainAdapter):
                 rep.lp_locked_pct = 100.0
                 rep.flags.append("bonding_curve")
             else:
-                locks = [safe_float((m.get("lp") or {}).get("lpLockedPct"))
+                locks = [safe_float(as_dict(m.get("lp")).get("lpLockedPct"))
                          for m in graduated]
                 locks = [x for x in locks if x is not None]
                 if not locks:
@@ -171,7 +231,7 @@ class SolanaAdapter(ChainAdapter):
         # A lock expiring this afternoon is not protection. RugCheck returns
         # unlock timestamps in `lockers`, in a response already being fetched
         # — Surgeon read the percentage and discarded the horizon.
-        lockers = data.get("lockers") or {}
+        lockers = as_dict(data.get("lockers"))
         if isinstance(lockers, dict) and lockers:
             soonest = None
             burned = False

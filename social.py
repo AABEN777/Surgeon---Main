@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import config
-from chain_base import http_get
+from chain_base import http_get, as_dict
 import chains
 
 log = logging.getLogger("surgeon.social")
@@ -268,8 +268,8 @@ def resolve_chains(mentions: list[Mention],
             chain_key = enabled.get(pair.get("chainId"))
             if not chain_key:
                 continue
-            addr = ((pair.get("baseToken") or {}).get("address") or "").lower()
-            liq = safe_float((pair.get("liquidity") or {}).get("usd"))
+            addr = as_dict((pair.get("baseToken")).get("address") or "").lower()
+            liq = safe_float(as_dict(pair.get("liquidity")).get("usd"))
             if addr in by_addr and liq > deepest.get(addr, (0, ""))[0]:
                 deepest[addr] = (liq, chain_key)
 

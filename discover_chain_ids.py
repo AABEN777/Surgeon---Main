@@ -55,7 +55,7 @@ def geckoterminal_networks() -> list[tuple[str, str]]:
         if not rows:
             break
         for n in rows:
-            out.append((n.get("id", ""), (n.get("attributes") or {}).get("name", "")))
+            out.append((n.get("id", ""), as_dict(n.get("attributes")).get("name", "")))
     return out
 
 

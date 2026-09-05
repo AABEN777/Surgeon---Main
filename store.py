@@ -261,6 +261,14 @@ class Store:
             # rules that already shipped — unproven, clusters, LP_PULLABLE —
             # could never be verified either. Cheap to keep, impossible to
             # reconstruct afterwards.
+            # The rug score itself, and which scale it was read on. Never
+            # stored, so "why is every token 1?" could not be answered from
+            # the data — only guessed at. RugCheck serves a legacy score in
+            # the thousands and a normalised 0-100, and without keeping both
+            # the number and the scale there is no way to tell a genuinely
+            # clean token from a field we are misreading.
+            "risk_raw":            s.risk_raw,
+            "risk_scale":          s.risk_scale,
             "holder_count":        s.holder_count,
             "top10_pct":           s.top10_pct,
             "insider_pct":         s.insider_pct,

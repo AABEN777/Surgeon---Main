@@ -270,7 +270,17 @@ SAFETY = {
     "lp_zero_holder_min":  500,
     "max_buy_tax_pct":      10.0,   # EVM
     "max_sell_tax_pct":     10.0,   # EVM
-    "rugcheck_raw_block":   500,    # Solana: raw score above this = block
+    # RugCheck serves two scores and changed which one `score` carries. The
+    # legacy scale runs into the thousands; score_normalised is 0-100.
+    # Reading only `score` meant every token came back as 1 once they
+    # switched, and a block at 500 could never fire — the check was silently
+    # dead. Both scales are handled now, and the threshold is chosen from
+    # whichever the number is actually on.
+    "rugcheck_raw_block":   500,    # legacy scale
+    # 40 on the 0-100 scale, deliberately conservative until we can see what
+    # real tokens score. King's alerts will show the scale and the threshold,
+    # so this can be set from evidence rather than guessed at twice.
+    "rugcheck_normalised_block": 40,
     # A low score on a token with no holder base means the checks had nothing
     # to examine, not that the token is safe.
     "rug_score_min_holders": 300,

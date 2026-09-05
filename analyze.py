@@ -23,6 +23,7 @@ import argparse
 
 import config
 import chains
+from chain_base import as_dict
 import scoring
 import risk
 import alerts
@@ -271,9 +272,9 @@ def poll_once() -> int:
 
     for u in updates:
         last_id = max(last_id, int(u.get("update_id", 0)))
-        msg = u.get("message") or u.get("channel_post") or {}
+        msg = as_dict(u.get("message")) or as_dict(u.get("channel_post"))
         text = msg.get("text") or ""
-        chat_id = str((msg.get("chat") or {}).get("id") or "")
+        chat_id = str(as_dict(msg.get("chat")).get("id") or "")
         if not text or not chat_id:
             continue
 

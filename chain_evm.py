@@ -19,6 +19,7 @@ from typing import Optional
 
 import config
 from chain_base import (
+    as_dict,
     as_list,
     ChainAdapter, SafetyReport, CreatorActivity,
     http_get, safe_float, safe_int,
@@ -191,7 +192,7 @@ class EvmAdapter(ChainAdapter):
         if not items:
             return
 
-        token_info = data.get("token") or {}
+        token_info = as_dict(data.get("token"))
         supply = safe_float(token_info.get("total_supply"))
         if supply <= 0:
             info = http_get(f"{self.blockscout.rstrip('/')}/api/v2/tokens/{ca}",
@@ -202,7 +203,7 @@ class EvmAdapter(ChainAdapter):
 
         pcts, skipped = [], 0
         for h in items:
-            a = h.get("address") or {}
+            a = as_dict(h.get("address"))
             addr = (a.get("hash") or "").lower()
             tag = a.get("name") or a.get("implementation_name") or ""
             # Blockscout marks contracts — pools and lockers are contracts,
@@ -254,10 +255,10 @@ class EvmAdapter(ChainAdapter):
 
         sold = 0.0
         for tr in items:
-            frm = ((tr.get("from") or {}).get("hash") or "").lower()
+            frm = as_dict((tr.get("from")).get("hash") or "").lower()
             if frm != creator_l:
                 continue
-            total = tr.get("total") or {}
+            total = as_dict(tr.get("total"))
             val = safe_float(total.get("value"))
             dec = safe_int(total.get("decimals"), 18)
             sold += val / (10 ** dec) if dec else val

@@ -201,6 +201,11 @@ alter table watchlist add column if not exists park_reason text default 'too_you
 -- that peaked +2,371% indistinguishable from one correctly filtered.
 alter table signals add column if not exists send_error          text;
 
+-- The rug score and which scale it came from. Without both, "why is every
+-- token scoring 1?" cannot be answered from the data.
+alter table signals add column if not exists risk_raw            double precision;
+alter table signals add column if not exists risk_scale          text;
+
 alter table signals add column if not exists holder_count        integer;
 alter table signals add column if not exists top10_pct           double precision;
 alter table signals add column if not exists insider_pct         double precision;

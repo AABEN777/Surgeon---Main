@@ -2625,6 +2625,121 @@ def test_missed_counter_persists():
         store_mod._mem["signals"] = []
 
 
+def test_rugcheck_both_scales():
+    """
+    On the VPS, rug scores varied — 1580, 420, 180. Now every token reads 1.
+
+    RugCheck serves two scores and changed which one `score` carries. The
+    legacy scale runs into the thousands; score_normalised is 0-100. We read
+    only `score`, so once they switched, every token came back small and a
+    block set at 500 could never fire again. The check was silently dead, and
+    the display bands — clean at 50, severe above 500 — made everything read
+    "clean" regardless of what it was.
+    """
+    import chain_solana, chains as chains_mod
+    print("\nrugcheck scales")
+
+    real = chain_solana.http_get
+
+    def read(payload):
+        chain_solana.http_get = lambda *a, **k: {
+            **payload, "token": {}, "topHolders": [], "markets": [],
+            "risks": []}
+        return chains_mod.get_adapter("solana").safety("So1111", None)
+
+    try:
+        # Legacy numbers still route to the legacy threshold.
+        legacy = read({"score": 1580})
+        check("a legacy score keeps its scale",
+              legacy.risk_scale, "rugcheck:legacy")
+        check_true("and is blocked at 500",
+                   any(h.startswith("risk_score") for h in legacy.hard_rejects))
+
+        # Small numbers mean the normalised scale, whichever field they are in.
+        norm = read({"score": 12, "score_normalised": 12})
+        check("a small score is read as normalised",
+              norm.risk_scale, "rugcheck:normalised")
+        check("and uses the normalised threshold",
+              norm.risk_block_at, config.SAFETY["rugcheck_normalised_block"])
+        check_true("12 passes on that scale",
+                   not any(h.startswith("risk_score") for h in norm.hard_rejects))
+
+        risky = read({"score": 68, "score_normalised": 68})
+        check_true("but 68 does not",
+                   any(h.startswith("risk_score") for h in risky.hard_rejects))
+
+        # When both are present the legacy one wins, because it discriminates
+        # over a wider range.
+        both = read({"score": 2400, "score_normalised": 31})
+        check("both present prefers the legacy scale",
+              both.risk_scale, "rugcheck:legacy")
+
+        check_true("no score at all is recorded as unavailable",
+                   "risk_raw" in read({}).unavailable)
+
+        # safe_float turned anything unparseable into 0.0, and 0 on the
+        # normalised scale grades as a perfect score — so a malformed
+        # response would have read as clean. Same shape as every other fault
+        # this week: the failure reported something plausible.
+        for junk, label in ((("nonsense"), "a string of text"),
+                            ((-5), "a negative"),
+                            ((None), "an explicit null")):
+            rep = read({"score": junk})
+            check_true(f"{label} is unavailable, not clean",
+                       rep.risk_raw is None and "risk_raw" in rep.unavailable)
+
+        # bool is a subclass of int, so float(True) is 1.0 — a boolean would
+        # have read as a clean score.
+        for junk in (True, False):
+            check_true(f"a boolean ({junk}) is not a score",
+                       read({"score": junk}).risk_raw is None)
+
+        # NaN fails every comparison, which the >= 0 guard catches.
+        check_true("NaN is not a score",
+                   read({"score": float("nan")}).risk_raw is None)
+
+        # The 500 line came from real VPS outcomes — tokens above it rugged.
+        # It is not moved on the strength of a secondary source.
+        check("the legacy block stays where the data put it",
+              config.SAFETY["rugcheck_raw_block"], 500)
+        check_true("500 itself passes",
+                   not any(h.startswith("risk_score")
+                           for h in read({"score": 500}).hard_rejects))
+        check_true("501 does not",
+                   any(h.startswith("risk_score")
+                       for h in read({"score": 501}).hard_rejects))
+
+        # Exactly 100 is ambiguous — clean on the legacy scale, maximum risk
+        # on the normalised one. It falls through to normalised and is
+        # rejected, which is the conservative way round: skipping one clean
+        # token costs less than admitting one at maximum risk.
+        check_true("100 is treated conservatively",
+                   any(h.startswith("risk_score")
+                       for h in read({"score": 100}).hard_rejects))
+
+        # A number in a string is still a number.
+        check("a numeric string is read", read({"score": "1580"}).risk_raw, 1580.0)
+        # And the American spelling is handled, since RugCheck uses both.
+        check("score_normalized is read too",
+              read({"score_normalized": 44}).risk_raw, 44.0)
+    finally:
+        chain_solana.http_get = real
+
+    # The display bands must follow the scale, or everything reads clean.
+    def grade(raw, scale):
+        return SafetyReport(ca="x", chain="solana", sources=["rugcheck"],
+                            top_holder_pct=3.0, holder_count=800,
+                            lp_locked_pct=100.0, risk_raw=raw,
+                            risk_scale=scale).display()
+
+    check_true("33 is elevated on the normalised scale",
+               "elevated" in grade(33, "rugcheck:normalised"))
+    check_true("but clean on the legacy one",
+               "clean" in grade(33, "rugcheck:legacy"))
+    check_true("1 is clean on either", "clean" in grade(1, "rugcheck:normalised")
+               and "clean" in grade(1, "rugcheck:legacy"))
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2742,6 +2857,7 @@ def main():
     test_wallet_clusters()
     test_provider_outage()
     test_breaker_ignores_missing_tokens()
+    test_rugcheck_both_scales()
     test_arc_ready_when_enabled()
     test_malformed_payloads()
     test_cooloff_removed()

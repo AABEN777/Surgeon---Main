@@ -111,7 +111,11 @@ class SafetyReport:
     creator: Optional[str] = None
     creator_holds_pct: Optional[float] = None
     risk_raw: Optional[float] = None          # chain-native score, display only
-    risk_scale: Optional[str] = None          # e.g. "rugcheck:lower_is_safer"
+    risk_scale: Optional[str] = None          # "rugcheck:legacy" or ":normalised"
+    # The threshold actually applied, so the alert can state it. RugCheck
+    # changed which field `score` carries, and a block set for the legacy
+    # scale silently stopped firing on the new one.
+    risk_block_at: Optional[float] = None
     flags: list[str] = field(default_factory=list)
     hard_rejects: list[str] = field(default_factory=list)
     unavailable: list[str] = field(default_factory=list)
@@ -202,13 +206,23 @@ class SafetyReport:
             # flagged yet", not "verified safe", and labelling it clean was
             # the same absence-as-evidence mistake as the zeroed fields.
             r = self.risk_raw
-            if r <= 50 and not self.rug_score_meaningful:
+            # The bands have to match the scale. They were written for
+            # RugCheck's legacy score, which runs into the thousands — on the
+            # 0-100 scale it moved to, everything reads "clean" because
+            # almost nothing exceeds 50. That is why every token has been
+            # showing "Rug 1 (clean)" regardless of what it actually is.
+            if (self.risk_scale or "").endswith("normalised"):
+                clean, minor, elevated = 10, 25, 40
+            else:
+                clean, minor, elevated = 50, 200, 500
+
+            if r <= clean and not self.rug_score_meaningful:
                 grade = "unproven"
-            elif r <= 50:
+            elif r <= clean:
                 grade = "clean"
-            elif r <= 200:
+            elif r <= minor:
                 grade = "minor"
-            elif r <= 500:
+            elif r <= elevated:
                 grade = "elevated"
             else:
                 grade = "severe"
@@ -390,6 +404,18 @@ def as_list(v, dicts_only: bool = True) -> list:
     return [x for x in v if isinstance(x, dict)] if dicts_only else v
 
 
+def as_dict(v) -> dict:
+    """
+    A field from an API response, as something safe to call .get() on.
+
+    `as_dict(data.get("token"))` looks defensive and is not: a string is
+    truthy, so it survives the `or` and the first .get() raises. The same
+    fault as as_list, in the other shape — and it crashed the entire Solana
+    safety check when RugCheck returned a malformed field.
+    """
+    return v if isinstance(v, dict) else {}
+
+
 def safe_float(v, default=0.0) -> float:
     try:
         if v is None:
@@ -443,7 +469,8 @@ def geckoterminal_discover(network: str, pages: int = 2) -> list[str]:
         if not isinstance(data, dict):
             continue
         for pool in as_list(data.get("data")):
-            rel = ((pool.get("relationships") or {}).get("base_token") or {}).get("data") or {}
+            rel = as_dict(as_dict(as_dict(pool.get("relationships"))
+                                  .get("base_token")).get("data"))
             token_id = rel.get("id") or ""
             # ids look like "base_0xabc..." / "solana_9xQ..."
             ca = token_id.split("_", 1)[1] if "_" in token_id else token_id
@@ -521,18 +548,18 @@ def geckoterminal_market(ca: str, chain: str, network: str,
         pools = as_list((data or {}).get("data"))
         if pools:
             pool = max(pools, key=lambda p: safe_float(
-                (p.get("attributes") or {}).get("reserve_in_usd")))
+                as_dict(p.get("attributes")).get("reserve_in_usd")))
             _GT_POOL_CACHE[(network, ca)] = (time.time(), pool)
 
     if not pool:
         return TokenMarket(ca=ca, chain=chain, ok=False, error="gt_no_pool")
 
-    a = pool.get("attributes") or {}
-    vol = a.get("volume_usd") or {}
-    chg = a.get("price_change_percentage") or {}
-    txs = a.get("transactions") or {}
-    t5m = txs.get("m5") or {}
-    t1h = txs.get("h1") or {}
+    a = as_dict(pool.get("attributes"))
+    vol = as_dict(a.get("volume_usd"))
+    chg = as_dict(a.get("price_change_percentage"))
+    txs = as_dict(a.get("transactions"))
+    t5m = as_dict(txs.get("m5"))
+    t1h = as_dict(txs.get("h1"))
 
     # pool name looks like "REDDIT / WETH 0.3%"
     pool_name = a.get("name") or ""
@@ -549,8 +576,8 @@ def geckoterminal_market(ca: str, chain: str, network: str,
         except Exception:
             age_known = False
 
-    dex = (((pool.get("relationships") or {}).get("dex") or {})
-           .get("data") or {}).get("id") or ""
+    dex = as_dict(as_dict(as_dict(pool.get("relationships")).get("dex"))
+                  .get("data")).get("id") or ""
 
     return TokenMarket(
         ca=ca, chain=chain,
@@ -587,17 +614,18 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
         return TokenMarket(ca=ca, chain=chain, ok=False, error="no_pairs")
 
     # Deepest liquidity is the honest reference pool.
-    pair = max(pairs, key=lambda p: safe_float((p.get("liquidity") or {}).get("usd")))
+    pair = max(pairs,
+               key=lambda p: safe_float(as_dict(p.get("liquidity")).get("usd")))
     return _market_from_pair(ca, chain, pair)
 
 
 def _market_from_pair(ca: str, chain: str, pair: dict) -> TokenMarket:
-    vol   = pair.get("volume") or {}
-    chg   = pair.get("priceChange") or {}
-    txns  = pair.get("txns") or {}
-    t5m   = txns.get("m5") or {}
-    t1h   = txns.get("h1") or {}
-    base  = pair.get("baseToken") or {}
+    vol   = as_dict(pair.get("volume"))
+    chg   = as_dict(pair.get("priceChange"))
+    txns  = as_dict(pair.get("txns"))
+    t5m   = as_dict(txns.get("m5"))
+    t1h   = as_dict(txns.get("h1"))
+    base  = as_dict(pair.get("baseToken"))
 
     created_ms = safe_float(pair.get("pairCreatedAt"), 0)
     age_known = created_ms > 0
@@ -609,7 +637,7 @@ def _market_from_pair(ca: str, chain: str, pair: dict) -> TokenMarket:
         name=base.get("name") or "Unknown",
         symbol=base.get("symbol") or "???",
         price_usd=safe_float(pair.get("priceUsd")),
-        liquidity_usd=safe_float((pair.get("liquidity") or {}).get("usd")),
+        liquidity_usd=safe_float(as_dict(pair.get("liquidity")).get("usd")),
         fdv=safe_float(pair.get("fdv")),
         market_cap=safe_float(pair.get("marketCap")),
         volume_24h=safe_float(vol.get("h24")),
@@ -791,13 +819,13 @@ def dexscreener_markets(cas: list[str], chain: str,
         for pair in as_list(data.get("pairs")):
             if pair.get("chainId") != chain_id:
                 continue
-            addr = ((pair.get("baseToken") or {}).get("address") or "").lower()
+            addr = as_dict((pair.get("baseToken")).get("address") or "").lower()
             if addr in wanted:
                 by_token.setdefault(addr, []).append(pair)
 
         for addr, pairs in by_token.items():
             deepest = max(pairs, key=lambda p: safe_float(
-                (p.get("liquidity") or {}).get("usd")))
+                as_dict(p.get("liquidity")).get("usd")))
             out[wanted[addr]] = _market_from_pair(
                 wanted[addr], chain, deepest)
 

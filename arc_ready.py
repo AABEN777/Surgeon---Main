@@ -25,7 +25,7 @@ import json
 import argparse
 
 import config
-from chain_base import http_get
+from chain_base import http_get, as_dict
 
 # Names Arc might be listed under. Providers are inconsistent — Robinhood's
 # chain appears as "robinhood" on DexScreener and "robinhood" on
@@ -77,7 +77,7 @@ def probe_geckoterminal(verbose: bool) -> str | None:
             if not isinstance(row, dict):
                 continue
             ident = str(row.get("id") or "")
-            name = str((row.get("attributes") or {}).get("name") or "")
+            name = str(as_dict(row.get("attributes")).get("name") or "")
             if "arc" in ident.lower() or name.lower().startswith("arc"):
                 if verbose:
                     print(f"    geckoterminal -> {ident} ({name})")
