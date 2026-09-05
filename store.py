@@ -301,6 +301,62 @@ class Store:
             params["chain"] = f"eq.{chain}"
         return self.select("signals", params)
 
+    def preflight(self) -> tuple[bool, str]:
+        """
+        Can the database actually accept a signal?
+
+        Twice this week a missing column cost hours: the scan ran perfectly,
+        found tokens, sent alerts, and stored nothing, because one unknown
+        field rejects the whole insert. Everything looked healthy, and only
+        the watchdog noticed — several hours later.
+
+        This writes one row with every field record_signal writes, then
+        deletes it. If a column is missing the failure arrives in the first
+        second rather than the sixth hour.
+        """
+        if not self.live:
+            return True, "in-memory store — nothing to check"
+
+        canary = f"__preflight_{int(time.time())}"
+        probe = {
+            "ca": canary, "chain": "solana", "name": "preflight",
+            "symbol": "PRE", "tier": "first_moon", "band": "SKIP",
+            "conviction": 0, "momentum": "WEAK", "launch_phase": "TOO_EARLY",
+            "narrative": "", "session": "NORMAL", "launchpad": "",
+            "dex": "", "price_usd": 0.0, "entry_price": 0.0,
+            "liquidity_usd": 0.0, "fdv": 0.0, "volume_24h": 0.0,
+            "volume_1h": 0.0, "volume_5m": 0.0, "buys_5m": 0, "sells_5m": 0,
+            "change_1h": 0.0, "change_5m": 0.0, "age_hours": 0.0,
+            "smart_wallets": 0, "social_channels": 0.0,
+            "safety_verdict": "UNVERIFIED", "safety_sources": "",
+            "unavailable": "", "creator_holds_pct": 0.0, "dev_held": False,
+            "top_holder_pct": 0.0, "top10_pct": 0.0, "insider_pct": 0.0,
+            "lp_locked_pct": 0.0, "lp_top_unlocked_pct": 0.0,
+            "holder_count": 0, "cluster_wallets": 0,
+            "risk_raw": 0.0, "risk_scale": "",
+            "breakdown": "preflight", "from_watchlist": False,
+            "alerted_at": time.time(), "alert_sent": False,
+            "send_error": "preflight", "outcome": "DATA_ERROR",
+            "missed_checks": 0,
+        }
+        try:
+            res = self._req("POST", "signals", body=probe,
+                            extra_headers={"Prefer": "return=minimal"})
+        except Exception as e:
+            return False, f"could not reach the database: {e}"
+        finally:
+            try:
+                self._req("DELETE", "signals", params={"ca": f"eq.{canary}"})
+            except Exception:
+                pass
+
+        if res is None:
+            return False, ("the database rejected a signal — a column is "
+                           "probably missing. Check the warning above for "
+                           "which one, then add it and reload the schema "
+                           "cache with: notify pgrst, 'reload schema';")
+        return True, "database accepts signals"
+
     def note_missed_check(self, ca: str, count: int):
         """
         How many consecutive checks have failed to see this token.

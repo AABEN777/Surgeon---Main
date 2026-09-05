@@ -699,6 +699,19 @@ def main() -> int:
     if not store.live:
         log.warning("no database — dedupe and positions will not persist")
 
+    # Fail in the first second rather than the sixth hour. Twice this week a
+    # missing column meant the scan ran perfectly, found tokens, sent alerts
+    # and stored nothing — one unknown field rejects the whole insert, and
+    # everything else looks healthy while it happens. Only the watchdog
+    # noticed, hours later.
+    ok, detail = store.preflight()
+    if not ok:
+        log.error("PREFLIGHT FAILED — %s", detail)
+        log.error("refusing to scan: alerts would fire and nothing would be "
+                  "recorded, which is how six hours went missing twice.")
+        return 1
+    log.info("preflight: %s", detail)
+
     # A cooling-off period suppresses alerts, never discovery. Tracking and
     # the watchlist keep running so the outcome data stays continuous and a
     # runner during a bad stretch is still recorded.

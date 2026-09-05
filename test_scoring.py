@@ -2807,6 +2807,66 @@ def test_bulk_market_fetch_shapes():
     check("every as_dict guards the right expression", wrong, [])
 
 
+def test_preflight_refuses_broken_storage():
+    """
+    Twice this week a missing column cost hours. The scan ran perfectly,
+    found tokens, sent alerts, and stored nothing — one unknown field
+    rejects the whole insert, so everything downstream looks healthy while
+    the record is empty. Only the watchdog noticed, and only much later.
+
+    Preflight writes one row carrying every field record_signal writes, then
+    deletes it. A missing column now fails in the first second.
+    """
+    import store as store_mod, scan, inspect
+    print("\npreflight")
+
+    ok, detail = store_mod.store.preflight()
+    check_true("an in-memory store needs no check", ok)
+
+    real_req, real_live = store_mod.store._req, store_mod.store.live
+    try:
+        store_mod.store.live = True
+
+        # A rejected insert is exactly what a missing column produces.
+        store_mod.store._req = lambda method, table, **kw: (
+            None if method == "POST" else [])
+        ok, detail = store_mod.store.preflight()
+        check_true("a rejected insert fails preflight", not ok)
+        check_true("and says a column is probably missing",
+                   "column" in detail)
+        check_true("and names the cache reload", "reload schema" in detail)
+
+        # An accepted insert passes.
+        store_mod.store._req = lambda method, table, **kw: []
+        ok, _ = store_mod.store.preflight()
+        check_true("an accepted insert passes", ok)
+
+        # A dead connection fails rather than raising.
+        def boom(*a, **k):
+            raise ConnectionError("no route to host")
+        store_mod.store._req = boom
+        ok, detail = store_mod.store.preflight()
+        check_true("an unreachable database fails cleanly", not ok)
+    finally:
+        store_mod.store._req = real_req
+        store_mod.store.live = real_live
+
+    # The probe must carry every field a real signal does, or it proves
+    # nothing — a column missing from the probe is a column it cannot catch.
+    probe_src = inspect.getsource(store_mod.Store.preflight)
+    record_src = inspect.getsource(store_mod.Store.record_signal)
+    import re
+    written = set(re.findall(r'"(\w+)":', record_src))
+    probed = set(re.findall(r'"(\w+)":', probe_src))
+    check("the probe covers every stored field", sorted(written - probed), [])
+
+    # And the scan must actually stop.
+    main_src = inspect.getsource(scan.main)
+    check_true("the scan calls preflight", "store.preflight()" in main_src)
+    check_true("and refuses to run when it fails",
+               "PREFLIGHT FAILED" in main_src)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2928,6 +2988,7 @@ def main():
     test_arc_ready_when_enabled()
     test_malformed_payloads()
     test_bulk_market_fetch_shapes()
+    test_preflight_refuses_broken_storage()
     test_cooloff_removed()
     test_watchdog()
     test_alert_floors_aligned()
