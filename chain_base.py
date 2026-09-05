@@ -819,7 +819,7 @@ def dexscreener_markets(cas: list[str], chain: str,
         for pair in as_list(data.get("pairs")):
             if pair.get("chainId") != chain_id:
                 continue
-            addr = as_dict((pair.get("baseToken")).get("address") or "").lower()
+            addr = str(as_dict(pair.get("baseToken")).get("address") or "").lower()
             if addr in wanted:
                 by_token.setdefault(addr, []).append(pair)
 

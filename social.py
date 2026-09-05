@@ -268,7 +268,7 @@ def resolve_chains(mentions: list[Mention],
             chain_key = enabled.get(pair.get("chainId"))
             if not chain_key:
                 continue
-            addr = as_dict((pair.get("baseToken")).get("address") or "").lower()
+            addr = str(as_dict(pair.get("baseToken")).get("address") or "").lower()
             liq = safe_float(as_dict(pair.get("liquidity")).get("usd"))
             if addr in by_addr and liq > deepest.get(addr, (0, ""))[0]:
                 deepest[addr] = (liq, chain_key)

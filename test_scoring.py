@@ -2740,6 +2740,73 @@ def test_rugcheck_both_scales():
                and "clean" in grade(1, "rugcheck:legacy"))
 
 
+def test_bulk_market_fetch_shapes():
+    """
+    `dexscreener_markets` crashed the whole scan on a live run:
+
+        addr = as_dict((pair.get("baseToken")).get("address") or "").lower()
+        AttributeError: 'dict' object has no attribute 'lower'
+
+    An automated edit had wrapped the wrong expression — the guard belonged
+    around the inner get, not the outer one, and the result was a dict where
+    a string was expected. Two more lines carried the identical fault and
+    were only found by walking every as_dict call structurally rather than
+    grepping for a pattern.
+
+    This is the function the watchlist re-check runs first, so the failure
+    took the scan down before a single chain was examined.
+    """
+    import chain_base
+    print("\nbulk market fetch")
+
+    real = chain_base.http_get
+    shapes = [
+        ({"pairs": [{"baseToken": {"address": "0xABC"}, "chainId": "base"}]},
+         "well formed"),
+        ({"pairs": [{"baseToken": "x", "chainId": "base"}]}, "baseToken a string"),
+        ({"pairs": [{"baseToken": None, "chainId": "base"}]}, "baseToken null"),
+        ({"pairs": [{"chainId": "base"}]}, "no baseToken"),
+        ({"pairs": "x"}, "pairs a string"),
+        ({"pairs": None}, "pairs null"),
+        ({}, "empty"),
+    ]
+    try:
+        for payload, label in shapes:
+            chain_base.http_get = lambda *a, _p=payload, **k: _p
+            try:
+                chain_base.dexscreener_markets(["0x" + "a" * 40], "base", "base")
+                ok = True
+            except Exception:
+                ok = False
+            check_true(f"survives {label}", ok)
+    finally:
+        chain_base.http_get = real
+
+    # And no as_dict call may guard the wrong half of a chained get.
+    import ast as _ast, pathlib as _p
+    wrong = []
+    for f in sorted(_p.Path(".").glob("*.py")):
+        if "test" in f.name:
+            continue
+        try:
+            tree = _ast.parse(f.read_text())
+        except SyntaxError:
+            continue
+        for node in _ast.walk(tree):
+            if not (isinstance(node, _ast.Call)
+                    and getattr(node.func, "id", "") == "as_dict"):
+                continue
+            arg = node.args[0] if node.args else None
+            if isinstance(arg, _ast.BoolOp):
+                wrong.append(f"{f.name}:{node.lineno}")
+            elif (isinstance(arg, _ast.Call)
+                  and getattr(arg.func, "attr", "") == "get"
+                  and isinstance(arg.func.value, _ast.Call)
+                  and getattr(arg.func.value.func, "attr", "") == "get"):
+                wrong.append(f"{f.name}:{node.lineno}")
+    check("every as_dict guards the right expression", wrong, [])
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -2860,6 +2927,7 @@ def main():
     test_rugcheck_both_scales()
     test_arc_ready_when_enabled()
     test_malformed_payloads()
+    test_bulk_market_fetch_shapes()
     test_cooloff_removed()
     test_watchdog()
     test_alert_floors_aligned()

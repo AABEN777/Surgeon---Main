@@ -255,7 +255,7 @@ class EvmAdapter(ChainAdapter):
 
         sold = 0.0
         for tr in items:
-            frm = as_dict((tr.get("from")).get("hash") or "").lower()
+            frm = str(as_dict(tr.get("from")).get("hash") or "").lower()
             if frm != creator_l:
                 continue
             total = as_dict(tr.get("total"))
