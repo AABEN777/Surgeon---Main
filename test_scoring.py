@@ -2857,8 +2857,13 @@ def test_preflight_refuses_broken_storage():
     record_src = inspect.getsource(store_mod.Store.record_signal)
     import re
     written = set(re.findall(r'"(\w+)":', record_src))
-    probed = set(re.findall(r'"(\w+)":', probe_src))
+    probed = set(re.findall(r'"(\w+)":', probe_src)) - {"Prefer"}
+    # Both directions. Checking only one let the probe carry price_usd — a
+    # field that was never a column — so preflight refused to scan over a
+    # phantom of its own making.
     check("the probe covers every stored field", sorted(written - probed), [])
+    extra = sorted(probed - written - {"missed_checks"})
+    check("and invents none of its own", extra, [])
 
     # And the scan must actually stop.
     main_src = inspect.getsource(scan.main)

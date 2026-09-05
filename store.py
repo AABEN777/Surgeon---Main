@@ -317,13 +317,17 @@ class Store:
         if not self.live:
             return True, "in-memory store — nothing to check"
 
+        # Every key below must be one record_signal actually writes. A field
+        # that does not exist makes the probe fail on a phantom and refuse to
+        # scan — which is what price_usd did, having never been a column.
+        # The test suite checks this in both directions now.
         canary = f"__preflight_{int(time.time())}"
         probe = {
             "ca": canary, "chain": "solana", "name": "preflight",
             "symbol": "PRE", "tier": "first_moon", "band": "SKIP",
             "conviction": 0, "momentum": "WEAK", "launch_phase": "TOO_EARLY",
             "narrative": "", "session": "NORMAL", "launchpad": "",
-            "dex": "", "price_usd": 0.0, "entry_price": 0.0,
+            "dex": "", "entry_price": 0.0,
             "liquidity_usd": 0.0, "fdv": 0.0, "volume_24h": 0.0,
             "volume_1h": 0.0, "volume_5m": 0.0, "buys_5m": 0, "sells_5m": 0,
             "change_1h": 0.0, "change_5m": 0.0, "age_hours": 0.0,
