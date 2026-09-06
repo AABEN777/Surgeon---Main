@@ -280,14 +280,27 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
             # A real rug stays gone. A failed fetch does not, so absence has
             # to be confirmed across checks before it counts as death.
             missed = int(row.get("missed_checks") or 0)
-            if not market:
-                # Weakest evidence: we simply got nothing back.
+
+            # A token DexScreener does not return is filled in as a
+            # placeholder with ok=False. That was landing in the "pool reads
+            # empty" branch — the stronger-evidence path — when it means the
+            # opposite: we got nothing back at all. So every missing token
+            # was treated as a confirmed empty pool, and the no-data branch
+            # never fired once. FLOWER was closed at -100% with its pool
+            # still there.
+            if not market or not market.ok:
                 needed = config.WATCH["rug_confirmations_no_data"]
                 gone_reason = "no market data"
-            elif not market.ok or market.liquidity_usd <= 0:
-                # Stronger: the API answered and the pool is empty.
+            elif market.liquidity_usd <= 0 and (market.price_usd or 0) <= 0:
+                # The API answered, and both the pool and the price read
+                # zero. Either alone is a field that DexScreener glitches on;
+                # together they corroborate.
                 needed = config.WATCH["rug_confirmations_empty"]
-                gone_reason = "pool reads empty"
+                gone_reason = "pool and price both read zero"
+            elif market.liquidity_usd <= 0:
+                # Zero liquidity but a live price is a data fault, not a rug.
+                needed = config.WATCH["rug_confirmations_no_data"]
+                gone_reason = "liquidity reads zero but price is live"
             else:
                 needed = 0
 
@@ -327,7 +340,8 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
                     alerts.send(alerts.format_watch(
                         "RUGGED", row.get("name") or ca[:10], ca, -100.0,
                         adapter,
-                        f"liquidity gone — confirmed over {missed} checks"))
+                        f"recorded as RUGGED — {gone_reason}, confirmed "
+                        f"over {missed} checks"))
                 continue
 
             # It answered, so any earlier absence was our side, not the pool's.

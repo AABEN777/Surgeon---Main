@@ -2902,16 +2902,11 @@ def test_every_watch_event_has_a_header():
     check("every terminal event has one too",
           sorted(e for e in watch.TERMINAL if e not in alerts.WATCH_HEADERS), [])
 
-    # And a rug must not be announced as a stop.
-    rug_send = [l for l in src.splitlines()
-                if "liquidity gone" in l or "confirmed over" in l]
-    check_true("the rug alert exists", rug_send)
-    idx = src.index("liquidity gone")
-    window = src[max(0, idx - 400):idx]
-    check_true("and is sent under RUGGED, not STOP_LOSS",
-               '"RUGGED"' in window and window.rindex('"RUGGED"')
-               > window.rindex('"STOP_LOSS"') if '"STOP_LOSS"' in window
-               else '"RUGGED"' in window)
+    # A rug must not be announced as a stop, and must say what was recorded.
+    idx = src.find("recorded as RUGGED")
+    check_true("the rug alert exists", idx > 0)
+    window = src[max(0, idx - 500):idx]
+    check_true("and is sent under RUGGED, not STOP_LOSS", '"RUGGED"' in window)
 
 
 def test_empty_pool_needs_longer():
@@ -2930,6 +2925,78 @@ def test_empty_pool_needs_longer():
                W["rug_confirmations_empty"] >= 4)
     check_true("and missing data still needs its own confirmation",
                W["rug_confirmations_no_data"] >= 3)
+
+
+def test_missing_token_is_not_an_empty_pool():
+    """
+    FLOWER was closed at -100% with its liquidity still there.
+
+    A token DexScreener does not return is filled in as a placeholder with
+    ok=False. That was landing in the "pool reads empty" branch — the
+    stronger-evidence path — when it means the opposite: nothing came back at
+    all. So every missing token was treated as a confirmed empty pool, and
+    the no-data branch this was built around never fired once.
+
+    Zero liquidity alongside a live price is also a data fault rather than a
+    rug: a pool that genuinely no longer exists has no price either.
+    """
+    import watch, store as store_mod, chain_base, time as _t
+    print("\nmissing token vs empty pool")
+
+    now = _t.time()
+    real = chain_base.dexscreener_markets
+
+    def fresh():
+        store_mod._mem["signals"] = [{
+            "ca": "0xAAA", "chain": "robinhood", "name": "FLOWER",
+            "symbol": "FLOWER", "outcome": "pending", "entry_price": 1.0,
+            "peak_price": 1.4, "alerted_at": now - 3600,
+            "liquidity_usd": 40000, "alert_sent": True, "missed_checks": 0,
+            "peak_pnl": 40}]
+
+    def market(**kw):
+        base = dict(ca="0xAAA", chain="robinhood", name="FLOWER",
+                    symbol="FLOWER", dex="uniswap-v4-robinhood")
+        base.update(kw)
+        return {"0xAAA": TokenMarket(**base)}
+
+    def ticks_to_close(m, limit=8):
+        fresh()
+        for i in range(1, limit + 1):
+            chain_base.dexscreener_markets = lambda cas, chain, cid: m
+            rows = [r for r in store_mod._mem["signals"]
+                    if r["outcome"] == "pending"]
+            if not rows:
+                return i - 1
+            watch.watch_chain("robinhood", rows, dry_run=True)
+        return limit + 1
+
+    try:
+        absent = ticks_to_close(market(ok=False, error="no_pairs"))
+        check("a token not returned uses the no-data threshold",
+              absent, config.WATCH["rug_confirmations_no_data"])
+
+        live_price = ticks_to_close(market(price_usd=1.2, liquidity_usd=0.0,
+                                           fdv=90000))
+        check("zero liquidity with a live price does too",
+              live_price, config.WATCH["rug_confirmations_no_data"])
+
+        both = ticks_to_close(market(price_usd=0.0, liquidity_usd=0.0, fdv=0))
+        check("only both reading zero uses the empty threshold",
+              both, config.WATCH["rug_confirmations_empty"])
+
+        check_true("and that is the slower of the two",
+                   config.WATCH["rug_confirmations_empty"]
+                   > config.WATCH["rug_confirmations_no_data"])
+    finally:
+        chain_base.dexscreener_markets = real
+        store_mod._mem["signals"] = []
+
+    # The alert must say what was recorded, not only what was observed.
+    import inspect
+    src = inspect.getsource(watch)
+    check_true("the alert says it was recorded as RUGGED",
+               "recorded as RUGGED" in src)
 
 
 def main():
@@ -3064,6 +3131,7 @@ def main():
     test_rug_needs_confirmation()
     test_every_watch_event_has_a_header()
     test_empty_pool_needs_longer()
+    test_missing_token_is_not_an_empty_pool()
     test_missed_counter_persists()
     test_unverified_held_for_recheck()
 
