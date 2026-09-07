@@ -236,10 +236,24 @@ def _thin_volume(market) -> RiskFlag | None:
     ratio = market.volume_24h / cap
     if ratio >= config.SCAM["min_volume_to_mcap"]:
         return None
+    # Penalty set to zero, flag kept.
+    #
+    # It measures 24h volume against cap, which asks a thirty-minute-old
+    # token for a day of trading — so it partly measures age. But the
+    # outcomes say more than that: flagged tokens beat unflagged in both age
+    # bands, on win rate and rug rate. Over 1h, 66.0% win and 1.9% rug
+    # against 54.5% and 6.7%. Under 1h, 49.4% and 18.7% against 30.5% and
+    # 21.7%, with intervals that do not overlap. We were charging up to 18
+    # points for a marker of better tokens.
+    #
+    # Not made positive either: the mechanism is not clear enough to reward,
+    # and the tier gates already reject genuinely thin tokens before scoring
+    # — only 2 of 1,605 trades had under $3k of hourly volume. The
+    # protection King feels from this flag comes from the gates, not here.
     if ratio < 0.15:
         return RiskFlag("THIN_VOLUME",
-                        f"24h volume {ratio:.0%} of cap", -18, "danger")
-    return RiskFlag("THIN_VOLUME", f"24h volume {ratio:.0%} of cap", -10)
+                        f"24h volume {ratio:.0%} of cap", 0, "warn")
+    return RiskFlag("THIN_VOLUME", f"24h volume {ratio:.0%} of cap", 0, "warn")
 
 
 def _bundled(safety) -> RiskFlag | None:

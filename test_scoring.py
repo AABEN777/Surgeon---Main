@@ -3082,6 +3082,114 @@ def test_no_activity_is_the_strongest_signal():
         check_true(f"buys={b} sells={s} evaluates without raising", ok)
 
 
+def test_the_read():
+    """
+    Surgeon sends a few hundred alerts a day across four chains. The score
+    says how much a token resembles a fresh launch; it does not say what this
+    particular one looks like.
+
+    Measured on King's own trades: two or more strong signals together wins
+    58.8% across 170 closed trades against 35.9% across 1,433. That spread is
+    what the read exists to surface — every alert now carries which signals
+    are present and what each has actually been worth.
+
+    Every figure in read.py comes from a query, with its sample size shown.
+    A 72% win rate on 25 trades and one on 629 are not the same claim.
+    """
+    import read as read_mod
+    print("\nthe read")
+
+    def build(**kw):
+        m = TokenMarket(ca="0x" + "a" * 40, chain="base", name="T",
+                        symbol="T", liquidity_usd=45000, fdv=180000,
+                        market_cap=180000, volume_24h=300000,
+                        volume_1h=120000, volume_5m=9000, change_5m=8,
+                        change_1h=95, age_hours=0.8, age_known=True,
+                        dex=kw.pop("dex", "uniswap"),
+                        buys_5m=kw.pop("buys", 60),
+                        sells_5m=kw.pop("sells", 20))
+        s = SafetyReport(ca=m.ca, chain="base", sources=["goplus"],
+                         top_holder_pct=3.0, top10_pct=kw.pop("top10", 14.0),
+                         holder_count=kw.pop("holders", 1400),
+                         cluster_wallets=kw.pop("cluster", 0),
+                         lp_locked_pct=100.0, creator_holds_pct=0.1,
+                         honeypot=False)
+        return m, s, kw.pop("tier", "second_moon")
+
+    strong, weak = read_mod.assess(*build(dex="raydium", holders=6000,
+                                          buys=88, sells=12))
+    labels = {f.label for f in strong}
+    check_true("a winning venue is recognised",
+               any("venue" in l for l in labels))
+    check_true("a large holder base is recognised",
+               any("5,000+" in l for l in labels))
+    check_true("buying pressure in the measured band is recognised",
+               any("85-97" in l for l in labels))
+    check_true("and that shape reads as strong", len(strong) >= 2)
+    check("which maps to the measured cohort",
+          read_mod.expected(len(strong)).win_rate, 58.8)
+
+    # The band is 85-97%. Above it is a different, much thinner cohort.
+    only_buys, _ = read_mod.assess(*build(buys=100, sells=0))
+    check_true("100% buys is not claimed as strong",
+               not any("85-97" in f.label for f in only_buys))
+
+    # Weak signals must be named too, or the read is only ever flattering.
+    s2, w2 = read_mod.assess(*build(holders=300, buys=30, sells=40,
+                                    top10=31, tier="first_moon"))
+    weak_labels = {f.label for f in w2}
+    check_true("a thin holder base is named",
+               any("under 1,000" in l for l in weak_labels))
+    check_true("heavy top-ten concentration is named",
+               any("top 10" in l for l in weak_labels))
+    check_true("and the weakest tier is named",
+               any("first_moon" in l for l in weak_labels))
+
+    # The single strongest negative in any analysis so far.
+    _, dead = read_mod.assess(*build(buys=0, sells=0))
+    check_true("no five-minute activity is named",
+               any("no trades" in f.label for f in dead))
+    check("and carries its measured rate",
+          next(f.win_rate for f in dead if "no trades" in f.label), 3.0)
+
+    # Sample sizes must reach the reader — a thin claim and a solid one
+    # cannot look the same.
+    out = read_mod.render(*build(dex="raydium", holders=6000, buys=88,
+                                 sells=12))
+    check_true("the read states sample sizes", "n=" in out)
+    check_true("and its own cohort rate", "58" in out or "59" in out)
+
+    # Every factor must carry evidence, not an opinion.
+    for name, f in {**read_mod.STRONG, **read_mod.WEAK}.items():
+        check_true(f"{name} has a sample behind it", f.sample > 0)
+        check_true(f"{name} has a measured rate", 0 < f.win_rate <= 100)
+
+    # An empty market is not "nothing to say" — trade counts default to
+    # zero, so it reads as no activity, which is the point.
+    bare = read_mod.render(TokenMarket(ca="x", chain="base"),
+                           SafetyReport(ca="x", chain="base"), "")
+    check_true("an empty market reads as no activity", "no trades" in bare)
+
+    # And the render must never raise, whatever it is handed — a read that
+    # fails would otherwise cost the alert.
+    import alerts as al
+    for m, s, tier in ((TokenMarket(ca="x", chain="base"),
+                        SafetyReport(ca="x", chain="base"), ""),
+                       (TokenMarket(ca="x", chain="base", buys_5m=None,
+                                    sells_5m=None),
+                        SafetyReport(ca="x", chain="base"), "first_moon"),
+                       (TokenMarket(ca="x", chain="base", dex=None),
+                        SafetyReport(ca="x", chain="base",
+                                     holder_count=None, top10_pct=None,
+                                     cluster_wallets=None), "boosted")):
+        try:
+            read_mod.render(m, s, tier)
+            ok = True
+        except Exception:
+            ok = False
+        check_true("the read survives incomplete data", ok)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -3209,6 +3317,7 @@ def main():
     test_alert_floors_aligned()
     test_venue_effects()
     test_no_activity_is_the_strongest_signal()
+    test_the_read()
     test_liquidity_floor_not_tiers()
     test_thin_liquidity_band()
     test_mute_reason_names_itself()

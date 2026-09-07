@@ -195,6 +195,33 @@ def format_signal(ev, adapter) -> str:
             mark = "🔴" if f.severity == "danger" else "🟡"
             lines.append(f"{mark} {esc(f.code)} — {esc(f.detail)} ({f.penalty})")
 
+    # Exit capacity. A $28k pool and a $280k pool are completely different
+    # positions and the liquidity figure alone does not say so.
+    try:
+        impacts = []
+        for size in config.EXIT_SIZES_USD:
+            hit = m.price_impact(size)
+            if hit is not None:
+                label = f"${size // 1000}k" if size >= 1000 else f"${size}"
+                impacts.append(f"{label} moves ~{hit:.0%}")
+        if impacts:
+            lines += ["", f"🚪 <b>Exit</b> — {esc(' · '.join(impacts))}"]
+    except Exception:
+        pass
+
+    # The read — what this particular token looks like, from measured
+    # outcomes rather than from the score. Two or more strong signals wins
+    # 58.8% against 35.9%, and the score alone cannot tell King which he is
+    # looking at.
+    try:
+        import read as read_mod
+        verdict = read_mod.render(m, s, getattr(ev, "tier", None)
+                                  and ev.tier.tier or "")
+        if verdict:
+            lines += ["", verdict]
+    except Exception:
+        pass          # a missing read must never cost the alert
+
     lines += [
         "",
         f"<code>{esc(m.ca)}</code>",

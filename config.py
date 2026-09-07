@@ -364,6 +364,13 @@ VENUES = {
 #   pumpswap     41.1% [31.5-51.4] on 90 — overlaps the baseline.
 #   pons-v2-dex  46.9% [30.9-63.6] on 32 — overlaps.
 
+# ── EXIT CAPACITY ─────────────────────────────────────────────────
+# Position sizes shown on every alert, so King can see whether he can get
+# out at his size rather than inferring it from a liquidity number. This is
+# what "avoid thin volume" actually means in practice, and it is arithmetic
+# on the pool rather than a prediction.
+EXIT_SIZES_USD = (500, 2000)
+
 # ── WALLET CLUSTERS ───────────────────────────────────────────────
 # What Bubblemaps shows visually: wallets that are not independent. Supply
 # across two hundred addresses looks like distribution in every per-wallet

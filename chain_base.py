@@ -68,6 +68,24 @@ class TokenMarket:
             return None if buys == 0 else float("inf")
         return buys / sells
 
+    def price_impact(self, size_usd: float) -> Optional[float]:
+        """
+        Roughly how far a sell of this size moves the price, as a fraction.
+
+        Constant-product arithmetic on the pool, not a forecast: for a pool
+        holding Q of quote currency, selling X of token returns X/(Q+X) less
+        than spot. Liquidity is reported as the whole pool, so Q is half of
+        it.
+
+        This is what "thin volume" actually means for someone deciding
+        whether to take a position — can the size be got back out — and it is
+        a different question from anything the ratio flags were measuring.
+        """
+        if self.liquidity_usd <= 0 or size_usd <= 0:
+            return None
+        quote = self.liquidity_usd / 2
+        return size_usd / (quote + size_usd)
+
     @property
     def vol_fdv_ratio(self) -> float:
         return (self.volume_24h / self.fdv) if self.fdv > 0 else 0.0
