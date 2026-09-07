@@ -194,6 +194,35 @@ def _venue(market) -> RiskFlag | None:
     return RiskFlag("VENUE", f"{dex} rugs well above average", points, "warn")
 
 
+def _no_activity(market) -> RiskFlag | None:
+    """
+    Nothing traded in the last five minutes.
+
+    The strongest single signal in any analysis so far: 3.0% win rate
+    [1.3-6.9] across 164 closed trades, average peak zero. The next worst
+    cohort wins 43%.
+
+    It is not a safety question — the token may be perfectly clean. It is
+    simply not moving, and a signal is a claim that something is happening.
+
+    One honest ambiguity: DexScreener's transaction counts coerce to zero
+    when absent, so "nothing traded" and "we could not read the trades" look
+    identical here. The outcome data does not care which it is — those 164
+    trades won 3.0% either way — and a token whose activity cannot be read is
+    not one to alert on.
+    """
+    if market is None:
+        return None
+    buys = market.buys_5m if market.buys_5m is not None else None
+    sells = market.sells_5m if market.sells_5m is not None else None
+    if buys is None and sells is None:
+        return None                       # not reported, not the same as zero
+    if (buys or 0) + (sells or 0) >= config.SCAM["min_trades_5m"]:
+        return None
+    return RiskFlag("NO_ACTIVITY", "no trades in the last 5 minutes",
+                    -40, "danger")
+
+
 def _thin_volume(market) -> RiskFlag | None:
     """
     Volume well below market cap means the valuation is not being tested.
@@ -312,6 +341,7 @@ CHECKS = (
     ("safety_market", _top10),
     ("safety_market", _bundled_distribution),
     ("safety", _wallet_cluster),
+    ("market", _no_activity),
     ("market", _venue),
     ("market", _thin_volume),
     ("safety", _bundled),

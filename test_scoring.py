@@ -620,9 +620,13 @@ def test_scam_flags():
     import risk
     print("\nscam heuristics")
 
+    # Trade counts are explicit now: they default to zero, and a token with
+    # no five-minute activity wins 3.0% [1.3-6.9] across 164 closed trades —
+    # so a fixture that omits them is not a clean token, it is a dead one.
     clean_m = TokenMarket(ca="a", chain="solana", name="Clean", symbol="CLN",
                           liquidity_usd=45000, fdv=180000, market_cap=180000,
-                          volume_24h=220000, volume_1h=60000)
+                          volume_24h=220000, volume_1h=60000,
+                          buys_5m=40, sells_5m=15)
     clean_s = SafetyReport(ca="a", chain="solana", sources=["rugcheck"],
                            top_holder_pct=2.8, insider_pct=4.0,
                            holder_count=640, creator_holds_pct=0.4)
@@ -3027,6 +3031,57 @@ def test_zero_price_judges_nothing():
     check("no caller divides by entry directly", raw, [])
 
 
+def test_no_activity_is_the_strongest_signal():
+    """
+    A token with no trades at all in the last five minutes wins 3.0%
+    [1.3-6.9] across 164 closed trades, with an average peak of zero.
+
+    Nothing else measured this week comes close — the next worst cohort wins
+    43%. It is not a rug signal or a safety signal; it is a "nothing is
+    happening" signal, and Surgeon was alerting on them.
+    """
+    import risk
+    print("\nno activity")
+
+    def flags(buys, sells):
+        m = TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                        liquidity_usd=40000, fdv=90000, market_cap=90000,
+                        volume_24h=200000, volume_1h=90000, volume_5m=6000,
+                        change_5m=6, change_1h=70, buys_5m=buys,
+                        sells_5m=sells, age_hours=0.6, age_known=True,
+                        dex="uniswap")
+        s = SafetyReport(ca="x", chain="base", sources=["goplus"],
+                         top_holder_pct=3.0, holder_count=600,
+                         lp_locked_pct=100.0, creator_holds_pct=0.1,
+                         honeypot=False)
+        return {f.code for f in risk.assess(m, s)}, scoring.evaluate(m, s, "base")
+
+    dead, dead_ev = flags(0, 0)
+    check_true("no trades at all is flagged", "NO_ACTIVITY" in dead)
+    check_true("and cannot alert", not dead_ev.should_alert)
+
+    alive, alive_ev = flags(60, 20)
+    check_true("an active token is not flagged", "NO_ACTIVITY" not in alive)
+    check_true("and can alert", alive_ev.should_alert)
+
+    one, _ = flags(1, 0)
+    check_true("a single trade clears the bar", "NO_ACTIVITY" not in one)
+
+    # Unreported counts are not the same as zero, and must not crash.
+    unknown, _ = flags(None, None)
+    check_true("unreported counts are not flagged as dead",
+               "NO_ACTIVITY" not in unknown)
+
+    # These combinations previously raised TypeError comparing None to an int.
+    for b, s in ((None, None), (5, None), (None, 5), (0, 5)):
+        try:
+            flags(b, s)
+            ok = True
+        except Exception:
+            ok = False
+        check_true(f"buys={b} sells={s} evaluates without raising", ok)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -3153,6 +3208,7 @@ def main():
     test_watchdog()
     test_alert_floors_aligned()
     test_venue_effects()
+    test_no_activity_is_the_strongest_signal()
     test_liquidity_floor_not_tiers()
     test_thin_liquidity_band()
     test_mute_reason_names_itself()

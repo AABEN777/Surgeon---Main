@@ -64,14 +64,21 @@ def momentum_quality(m: TokenMarket) -> str:
             score += 1
         elif ratio < 0.7:
             score -= 1
-    elif m.buys_5m >= 5 and m.sells_5m == 0:
+    elif (m.buys_5m or 0) >= 5 and m.sells_5m == 0:
         score += 1
 
-    total_tx = m.buys_5m + m.sells_5m
-    if total_tx >= 40:
-        score += 1
-    elif total_tx <= 3:
-        score -= 1
+    # None means the counts were not reported, which is not zero. Treating
+    # the two the same crashed on comparison and, where it did not, scored an
+    # unreported token as if nothing had traded.
+    if m.buys_5m is None and m.sells_5m is None:
+        total_tx = None
+    else:
+        total_tx = (m.buys_5m or 0) + (m.sells_5m or 0)
+    if total_tx is not None:
+        if total_tx >= 40:
+            score += 1
+        elif total_tx <= 3:
+            score -= 1
 
     if m.liquidity_usd > 0:
         vol_liq = m.volume_1h / m.liquidity_usd

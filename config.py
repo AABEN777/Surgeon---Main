@@ -399,6 +399,12 @@ SCAM = {
     "top10_early_hours":     1.0,
     "bundled_pct":          15.0,    # insider supply under 15%
 
+    # A token with no trades at all in the last five minutes wins 3.0%
+    # [1.3-6.9] across 164 closed trades, with an average peak of zero.
+    # Nothing else measured this week comes close — the next worst cohort is
+    # three times better. It is not a rug signal, it is a "nothing is
+    # happening" signal, and Surgeon was alerting on them.
+    "min_trades_5m":         1,
     "min_volume_to_mcap":    0.80,
     "min_holders":          50,
     "lp_pullable_pct":      35.0,

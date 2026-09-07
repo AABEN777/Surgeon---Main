@@ -343,6 +343,48 @@ it.
 data, the highest of any band that reaches the phone — 50-59 is 39.5% and
 60-69 is 35.6%. The recent decline is not the floor.
 
+## The strongest signal yet: no five-minute activity
+
+A token with **no trades at all in the last five minutes wins 3.0%**
+[1.3-6.9] across 164 closed trades, with an average peak of zero. The next
+worst cohort wins 43%. Nothing measured this week comes close.
+
+It is not a rug or safety signal — the token may be perfectly clean. It is
+simply not moving, and a signal is a claim that something is happening.
+Surgeon was alerting on them.
+
+Now a -40 flag, which puts them below every floor.
+
+One ambiguity worth recording: DexScreener's transaction counts coerce to
+zero when absent, so "nothing traded" and "we could not read the trades" look
+identical. The outcome data does not distinguish them either — those 164
+trades won 3.0% whichever they were — and a token whose activity cannot be
+read is not one to alert on.
+
+Finding it exposed two crashes on the same principle as the zero-price bug:
+`buy_ratio_5m` and `momentum_quality` both compared unreported counts against
+integers and raised TypeError. Absence is not a reading, and this is the
+third distinct place that has bitten.
+
+## The tier gradient — younger and smaller is losing
+
+| tier | trades | win rate | avg age | avg FDV |
+|---|---|---|---|---|
+| first_moon | 629 | **33.4%** [29.8-37.2] | 0.42h | $60k |
+| second_moon | 218 | 45.0% [38.5-51.6] | 1.26h | $441k |
+| boosted | 93 | 50.5% [40.6-60.5] | 6.90h | $674k |
+| social_call | 47 | 55.3% [41.2-68.6] | 75h | $5.3M |
+
+Win rate rises monotonically with age and size, and first_moon's interval
+does not overlap second_moon's. first_moon is **64% of all trades at the
+worst rate**.
+
+This cuts against GOLDEN_WINDOW, which pays +15 for being under two hours.
+Not acted on yet: the tiers are not random samples of the same population —
+first_moon's gates are looser by construction, so it admits more marginal
+tokens. Separating "young tokens are worse" from "our young-token gates are
+too loose" needs a within-tier comparison, not a between-tier one.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

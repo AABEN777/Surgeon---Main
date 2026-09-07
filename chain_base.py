@@ -58,9 +58,15 @@ class TokenMarket:
 
     @property
     def buy_ratio_5m(self) -> Optional[float]:
-        if self.sells_5m <= 0:
-            return None if self.buys_5m == 0 else float("inf")
-        return self.buys_5m / self.sells_5m
+        # None means the counts were not reported, which is not the same as
+        # zero — comparing None to an int raised TypeError and took the whole
+        # evaluation down. Absence is not a reading, here as everywhere else.
+        buys, sells = self.buys_5m, self.sells_5m
+        if buys is None or sells is None:
+            return None
+        if sells <= 0:
+            return None if buys == 0 else float("inf")
+        return buys / sells
 
     @property
     def vol_fdv_ratio(self) -> float:
