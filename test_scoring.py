@@ -653,14 +653,36 @@ def test_scam_flags():
                                            SafetyReport(ca="c", chain="base"))})
 
     # Several severe flags together should not be outvoted by momentum.
+    #
+    # THIN_VOLUME no longer counts toward this: its penalty is zero, because
+    # flagged tokens beat unflagged in both age bands on win rate and rug
+    # rate. A flag worth nothing must not help block a signal either, so this
+    # fixture now carries genuine danger flags instead.
     hot = TokenMarket(ca="d", chain="solana", name="Hot", symbol="HOT",
                       liquidity_usd=40000, fdv=900000, market_cap=900000,
                       volume_24h=45000, volume_1h=40000, volume_5m=9000,
                       change_1h=260, change_5m=40, buys_5m=300, sells_5m=40,
                       age_hours=0.8, age_known=True, dex="raydium")
-    ev = scoring.evaluate(hot, painted_s, "solana", social_channels=3,
+    severe_s = SafetyReport(ca="d", chain="solana", sources=["rugcheck"],
+                            top_holder_pct=34.0,      # danger
+                            insider_pct=24.0,         # danger
+                            top10_pct=62.0,           # danger
+                            holder_count=38, creator_holds_pct=22.0)
+    ev = scoring.evaluate(hot, severe_s, "solana", social_channels=3,
                           smart_wallets=2)
     check("stacked danger flags block the signal", ev.rejected_by, "scam_pattern")
+
+    # And a zero-penalty flag cannot contribute to that block.
+    thin_only = SafetyReport(ca="e", chain="solana", sources=["rugcheck"],
+                             top_holder_pct=2.0, insider_pct=1.0,
+                             top10_pct=8.0, holder_count=900,
+                             creator_holds_pct=0.2)
+    thin_flags = risk.assess(hot, thin_only)
+    check_true("thin volume alone carries no penalty",
+               all(f.penalty == 0 for f in thin_flags if f.code == "THIN_VOLUME"))
+    check_true("and does not count as danger",
+               all(f.severity != "danger" for f in thin_flags
+                   if f.code == "THIN_VOLUME"))
 
     # One warning must not silence an otherwise good signal.
     # 9% is now the warning level — the old fixture used 5%, which sits
@@ -3190,6 +3212,130 @@ def test_the_read():
         check_true("the read survives incomplete data", ok)
 
 
+def test_exit_capacity():
+    """
+    "Avoid thin volume" means being able to get a position back out, and no
+    ratio answers that. A $28k pool and a $280k pool are completely different
+    exits and the liquidity figure alone does not say so.
+
+    Constant-product arithmetic on the pool, not a forecast: selling X into a
+    pool holding Q of quote returns X/(Q+X) below spot, and liquidity is
+    reported as the whole pool so Q is half of it.
+    """
+    print("\nexit capacity")
+
+    def impact(liq, size):
+        return TokenMarket(ca="x", chain="base",
+                           liquidity_usd=liq).price_impact(size)
+
+    check_true("a shallow pool costs more to exit",
+               impact(12_000, 500) > impact(250_000, 500))
+    check_true("and a bigger size costs more than a smaller one",
+               impact(28_400, 2000) > impact(28_400, 500))
+    check_true("$500 out of $250k is negligible", impact(250_000, 500) < 0.01)
+    check_true("$2k out of $12k is not", impact(12_000, 2000) > 0.20)
+
+    check("no pool means no answer", impact(0, 500), None)
+    check("nor does a zero size", impact(50_000, 0), None)
+
+    # It has to reach the alert, or it is arithmetic nobody sees.
+    import alerts, chains, scoring as sc, re
+    m = TokenMarket(ca="0x" + "a" * 40, chain="base", name="T", symbol="T",
+                    liquidity_usd=18_000, fdv=180000, market_cap=180000,
+                    volume_24h=300000, volume_1h=120000, volume_5m=9000,
+                    change_5m=8, change_1h=95, age_hours=0.8, age_known=True,
+                    dex="raydium", buys_5m=58, sells_5m=12)
+    s = SafetyReport(ca=m.ca, chain="base", sources=["goplus"],
+                     top_holder_pct=3.0, top10_pct=14.0, holder_count=1400,
+                     lp_locked_pct=100.0, creator_holds_pct=0.1,
+                     honeypot=False)
+    out = re.sub(r"<[^>]+>", "",
+                 alerts.format_signal(sc.evaluate(m, s, "base"),
+                                      chains.get_adapter("base")))
+    check_true("the alert shows exit capacity", "Exit" in out)
+    check_true("for every configured size",
+               all(f"${n // 1000}k" in out or f"${n}" in out
+                   for n in config.EXIT_SIZES_USD))
+
+
+def test_age_is_the_only_rug_separator():
+    """
+    Restricted to tokens that passed safety, the ones that rugged and the
+    ones that survived are identical on every field we check:
+
+        top 10 %      13.7 vs 12.2
+        insider %      0.0 vs  0.0
+        LP locked    100.0 vs 100.0
+
+    No safety measure we have — or could reasonably add — distinguishes
+    them, because at signal time they are the same. The one difference is how
+    long they had been alive: 0.76h against 3.29h.
+
+    By age band, among tokens that passed safety:
+
+        under 30m   30.7% rug, 39.8% win, n=88
+        30-60m      10.9% rug, 54.3% win, n=46
+        1h+          ~4.8% rug, 57.1% win, n=42
+
+    Three times the rug rate under half an hour. The read states it; nothing
+    is filtered on it, because the same data cannot say what would happen to
+    tokens the gates never admitted.
+    """
+    import read as read_mod
+    print("\nage as a rug separator")
+
+    def factors(age):
+        m = TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                        liquidity_usd=45000, fdv=180000, market_cap=180000,
+                        volume_24h=300000, volume_1h=120000, volume_5m=9000,
+                        change_5m=8, change_1h=95, age_hours=age,
+                        age_known=True, dex="raydium", buys_5m=58,
+                        sells_5m=12)
+        s = SafetyReport(ca=m.ca, chain="base", sources=["goplus"],
+                         top_holder_pct=3.0, top10_pct=14.0,
+                         holder_count=1400, lp_locked_pct=100.0,
+                         creator_holds_pct=0.1, honeypot=False)
+        return read_mod.assess(m, s, "second_moon")
+
+    young_s, young_w = factors(0.3)
+    check_true("under 30 minutes reads as weak",
+               any("under 30 minutes" in f.label for f in young_w))
+    check_true("and carries its rug rate",
+               any(f.rug_rate and f.rug_rate > 25 for f in young_w))
+
+    mid_s, _ = factors(0.8)
+    check_true("30-60 minutes reads as strong",
+               any("30-60 minutes" in f.label for f in mid_s))
+
+    old_s, _ = factors(2.5)
+    check_true("over an hour reads as strong",
+               any("over an hour" in f.label for f in old_s))
+    check_true("with a much lower rug rate",
+               any(f.rug_rate is not None and f.rug_rate < 10 for f in old_s))
+
+    # A token whose age we cannot read must claim nothing either way.
+    m = TokenMarket(ca="x", chain="base", age_known=False, buys_5m=10,
+                    sells_5m=5)
+    s = SafetyReport(ca="x", chain="base")
+    st, wk = read_mod.assess(m, s, "")
+    check_true("unknown age says nothing about age",
+               not any("minutes" in f.label or "hour" in f.label
+                       for f in st + wk))
+
+    # The rug rate has to reach the alert, since it is the whole point.
+    out = read_mod.render(*(lambda a: (
+        TokenMarket(ca="x", chain="base", name="T", symbol="T",
+                    liquidity_usd=45000, fdv=180000, market_cap=180000,
+                    volume_24h=300000, volume_1h=120000, volume_5m=9000,
+                    change_5m=8, change_1h=95, age_hours=a, age_known=True,
+                    dex="raydium", buys_5m=58, sells_5m=12),
+        SafetyReport(ca="x", chain="base", sources=["goplus"],
+                     top_holder_pct=3.0, top10_pct=14.0, holder_count=1400,
+                     lp_locked_pct=100.0, creator_holds_pct=0.1,
+                     honeypot=False), "second_moon"))(0.3))
+    check_true("the alert states the rug rate", "rug" in out)
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -3318,6 +3464,8 @@ def main():
     test_venue_effects()
     test_no_activity_is_the_strongest_signal()
     test_the_read()
+    test_exit_capacity()
+    test_age_is_the_only_rug_separator()
     test_liquidity_floor_not_tiers()
     test_thin_liquidity_band()
     test_mute_reason_names_itself()

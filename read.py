@@ -28,6 +28,7 @@ class Factor:
     win_rate: float
     sample: int
     positive: bool = True
+    rug_rate: float | None = None      # where it is the point of the factor
 
     @property
     def confidence(self) -> str:
@@ -51,6 +52,15 @@ STRONG = {
     "venue":       Factor("on a venue that wins",   60.0, 110),
     "cluster":     Factor("wallet cluster present", 59.1, 22),
     "tier":        Factor("second_moon or boosted", 46.6, 311),
+
+    # Age, and it is the only thing that separates a clean token that rugs
+    # from a clean token that survives. Restricted to tokens that passed
+    # safety, the two groups are identical on every field we check — top ten
+    # 13.7% against 12.2%, insider 0.0% against 0.0%, LP 100% locked in both.
+    # The one difference is how long they had been alive: 0.76h against
+    # 3.29h.
+    "age_30_60":   Factor("30-60 minutes old",      54.3,  46, rug_rate=10.9),
+    "age_1h_plus": Factor("over an hour old",       57.1,  42, rug_rate=4.8),
 }
 
 WEAK = {
@@ -58,6 +68,11 @@ WEAK = {
     "top10_heavy": Factor("top 10 hold 25%+",       34.4,  32, positive=False),
     "first_moon":  Factor("first_moon tier",        33.4, 629, positive=False),
     "holders_few": Factor("under 1,000 holders",    33.9,  59, positive=False),
+
+    # Three times the rug rate of anything older, on 88 trades. No safety
+    # check we have distinguishes these — only the clock does.
+    "age_under_30": Factor("under 30 minutes old",  39.8,  88,
+                           positive=False, rug_rate=30.7),
 }
 
 # Measured directly: how the count of strong signals maps to outcome.
@@ -118,6 +133,19 @@ def assess(market, safety, tier: str) -> tuple[list[Factor], list[Factor]]:
     elif tier == "first_moon":
         weak.append(WEAK["first_moon"])
 
+    # -- age -------------------------------------------------------
+    # The only factor that separates a clean token that rugs from a clean one
+    # that survives, so it belongs in the read whatever the score does with
+    # it.
+    if getattr(market, "age_known", False) and market.age_hours is not None:
+        age = market.age_hours
+        if age < 0.5:
+            weak.append(WEAK["age_under_30"])
+        elif age < 1.0:
+            strong.append(STRONG["age_30_60"])
+        else:
+            strong.append(STRONG["age_1h_plus"])
+
     # -- concentration ---------------------------------------------
     if (safety.top10_pct or 0) >= config.SCAM["top10_pct"]:
         weak.append(WEAK["top10_heavy"])
@@ -156,12 +184,18 @@ def render(market, safety, tier: str) -> str:
              f"this shape wins {band.win_rate:.0f}% "
              f"<i>(n={band.sample})</i>"]
 
+    def detail(f):
+        # Rug rate is shown where it is the point of the factor — for age it
+        # is the whole reason the factor exists.
+        if f.rug_rate is not None:
+            return (f"<i>{f.win_rate:.0f}% win, {f.rug_rate:.0f}% rug, "
+                    f"n={f.sample}</i>")
+        return f"<i>{f.win_rate:.0f}%, n={f.sample}</i>"
+
     for f in strong:
-        lines.append(f"   ✓ {alerts.esc(f.label)} "
-                     f"<i>{f.win_rate:.0f}%, n={f.sample}</i>")
+        lines.append(f"   ✓ {alerts.esc(f.label)} {detail(f)}")
     for f in weak:
-        lines.append(f"   ✗ {alerts.esc(f.label)} "
-                     f"<i>{f.win_rate:.0f}%, n={f.sample}</i>")
+        lines.append(f"   ✗ {alerts.esc(f.label)} {detail(f)}")
 
     thin = [f for f in strong + weak if f.confidence == "thin"]
     if thin:
