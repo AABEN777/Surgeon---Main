@@ -82,7 +82,16 @@ CHAINS = {
         "kind":            "evm",
         "dexscreener_id":  "bsc",
         "geckoterminal_id": "bsc",
-        "discovery_pages":  2,
+        # Raised from 2. A BSC token reached $11M FDV and Surgeon never saw
+        # it at all — not signalled, not parked. Two pages is about forty new
+        # pools per scan, and BSC's launch rate is far above that, so we were
+        # reading the tail of the feed rather than the head. Exactly what lost
+        # the Cancer Vaccine on Solana before its depth went to six.
+        #
+        # This is a hypothesis, not a measurement: it could equally be that
+        # BSC tokens fail the gates on their merits. Watch whether BSC's
+        # candidate count rises materially above its current 50-60.
+        "discovery_pages":  5,
         "goplus_chain_id": "56",
         "blockscout":      None,
         "enabled":         True,
@@ -325,38 +334,35 @@ SAFETY = {
 # and 14%, so 58 trades is enough. uniswap and pumpswap sit on the baseline
 # on 1,459 and 592 trades and are deliberately absent.
 VENUES = {
-    # Was blocked outright on 5.2% win / 87.9% rug across 58 trades. Both
-    # numbers came from data the false-rug bug had corrupted, and I was wrong
-    # to tell King win rate was unaffected: a falsely rugged token is
-    # recorded as a loss at -100%, so a venue DexScreener indexed poorly
-    # would show a depressed win rate as well as an inflated rug rate.
+    # Rebuilt from clean data after the false-rug fix. Every rule here was
+    # previously set from rug rates a bug had corrupted, and two of the five
+    # turned out to be wrong in opposite directions.
     #
-    # If every one of those 51 rugs were false and those tokens won at the
-    # population rate, pons-v2 lands near 43% — indistinguishable from
-    # uniswap. The block cannot be defended on that data.
+    # pancakeswap carried -18 on a 21.5% win rate. On 40 clean trades it wins
+    # 55.0% [39.8-69.3] with an average peak of 59, the best of any venue.
     #
-    # Worse, a block generates no data at all, so it could never be tested.
-    # Downgraded to a heavy penalty: almost everything stays below the floor,
-    # but tokens are tracked and graded, and in a week there will be clean
-    # numbers to judge it on.
-    "pons-v2":              {"conviction": -30},
+    # pons-v2 carried -30 and never fired once: the real dex string is
+    # "pons-v2-dex" and the key never matched. On clean data it wins 46.9%,
+    # above the 38.4% baseline — so the rule was wrong as well as inert.
+    #
+    # pancakeswap_v2 and uniswap-v4-robinhood have not appeared often enough
+    # since the fix to judge, and both came from the same contaminated
+    # source. Removed until clean data says otherwise.
+    #
+    # Keys are matched exactly against DexScreener's dexId, lowercased. A key
+    # that does not match is a rule that silently does nothing.
 
-    # Win rates whose upper bound sits below the baseline. These were first
-    # set from rug rate, but rug rate was contaminated: "DexScreener returned
-    # nothing" was being recorded as a rug at -100%. Re-tested on win rate
-    # alone, which that bug does not touch, and both survive.
-    "pancakeswap_v2":       {"conviction": -18},   # 15.2% win [10.0-22.5], n=125
-    "pancakeswap":          {"conviction": -18},   # 21.5% win [17.7-25.9], n=390
-
-    # uniswap-v3-robinhood removed. Its -18 rested entirely on a 60.7% rug
-    # rate across 28 trades, and on win rate alone the interval is 10.2-39.5
-    # — it spans the baseline and proves nothing. Worth re-checking once the
-    # rug data is clean.
-
-    # win rates whose lower bound sits above the baseline
-    "uniswap-v4-base":      {"conviction":  +6},   # 49.7% win, n=322
-    "uniswap-v4-robinhood": {"conviction":  +6},   # 39.6% win, n=164
+    "uniswap-v4-base": {"conviction": +6},   # 64.3% [51.2-75.5], n=56
+    "raydium":         {"conviction": +6},   # 55.6% [42.4-68.0], n=54
 }
+
+# Seen but deliberately unscored:
+#   uniswap      32.1% [28.7-35.7] on 680 trades. Below baseline, but it is
+#                the generic pool for most of Robinhood, Base and BSC, so it
+#                is closer to being the baseline than a venue with an edge.
+#                Penalising it would penalise most of the system.
+#   pumpswap     41.1% [31.5-51.4] on 90 — overlaps the baseline.
+#   pons-v2-dex  46.9% [30.9-63.6] on 32 — overlaps.
 
 # ── WALLET CLUSTERS ───────────────────────────────────────────────
 # What Bubblemaps shows visually: wallets that are not independent. Supply

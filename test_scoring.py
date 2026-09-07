@@ -2132,25 +2132,21 @@ def test_alert_floors_aligned():
 
 def test_venue_effects():
     """
-    Where a token trades, measured on King's own 3,275 closed trades rather
-    than borrowed from a study. Baseline 28.3% win / 19.7% rug.
+    Where a token trades, rebuilt from clean data after the false-rug fix.
 
-    Only effects whose 95% interval clears the baseline are acted on:
+    Every earlier rule was set from rug rates a bug had corrupted, and two of
+    the five were wrong in opposite directions:
 
-        pons-v2               58 trades   5.2% win  [ 1.8-14.1]
-        pancakeswap_v2       125 trades  15.2% win  [10.0-22.5]
-        pancakeswap          390 trades  21.5% win  [17.7-25.9]
-        uniswap-v4-base      322 trades  49.7% win  [44.3-55.1]
-        uniswap-v4-robinhood 164 trades  39.6% win  [32.5-47.3]
+      pancakeswap  carried -18 on a 21.5% win rate. On clean data it wins
+                   55.0% [39.8-69.3] with the best average peak of any venue.
+      pons-v2      carried -30 and never fired once — the real dex string is
+                   "pons-v2-dex" and the key never matched. A rule whose key
+                   does not match is a rule that silently does nothing.
 
-    These were first set from rug rate, but rug rate was contaminated — a
-    missing DexScreener response was being recorded as a rug at -100%. Every
-    venue above was re-tested on win rate alone, which that bug does not
-    touch. uniswap-v3-robinhood did not survive: its -18 rested entirely on a
-    60.7% rug rate across 28 trades, and its win interval is 10.2-39.5.
+    What survives on clean data, against a 38.4% baseline:
 
-    uniswap and pumpswap account for 2,051 trades between them and neither
-    differs from the population, so both are deliberately absent.
+      uniswap-v4-base  64.3% [51.2-75.5], n=56
+      raydium          55.6% [42.4-68.0], n=54
     """
     print("\nvenue effects")
 
@@ -2166,48 +2162,27 @@ def test_venue_effects():
                          honeypot=False)
         return scoring.evaluate(m, s, "base")
 
-    # pons-v2 was blocked outright on 5.2% win / 87.9% rug, both measured
-    # through the false-rug bug. A falsely rugged token is recorded as a loss
-    # at -100%, so a venue DexScreener indexed poorly showed a depressed win
-    # rate as well as an inflated rug rate — and if all 51 of those rugs were
-    # false, pons-v2 lands near 43%, indistinguishable from uniswap.
-    #
-    # It is now a heavy penalty rather than a block, because a block produces
-    # no data and so can never be tested. It is a decision that confirms
-    # itself.
-    dead = ev("pons-v2")
-    check_true("the worst venue is silent", not dead.should_alert)
-    check_true("but still tracked, so it can be judged later",
-               dead.should_track)
-    check_true("and no venue is blocked outright",
-               not any(r.get("block") for r in config.VENUES.values()))
-
     neutral = ev("uniswap").conviction.score
-    check_true("a venue on the baseline scores neutrally",
+    check_true("the generic pool scores neutrally",
                not any(l.startswith("venue:")
                        for l, _ in ev("uniswap").conviction.components))
-    check_true("pumpswap is also neutral",
-               ev("pumpswap").conviction.score == neutral)
 
     check_true("a venue that wins scores higher",
                ev("uniswap-v4-base").conviction.score > neutral)
-    check_true("and robinhood v4 too",
-               ev("uniswap-v4-robinhood").conviction.score > neutral)
-    # Withdrawn: proven only by a number the rug bug corrupted.
-    check_true("a venue proven only by rug rate was withdrawn",
-               "uniswap-v3-robinhood" not in config.VENUES)
-    check_true("a venue that rugs scores lower",
-               ev("pancakeswap").conviction.score < neutral)
+    check_true("and raydium too", ev("raydium").conviction.score > neutral)
 
-    # Penalties arrive as risk flags so they appear in the alert rather than
-    # silently subtracting.
-    import risk
-    market = TokenMarket(ca="x", chain="bsc", name="T", symbol="T",
-                         liquidity_usd=40000, fdv=90000, age_hours=1.0,
-                         age_known=True, dex="pancakeswap")
-    flags = risk.assess(market, SafetyReport(ca="x", chain="bsc"))
-    check_true("and the alert says which venue",
-               any(f.code == "VENUE" for f in flags))
+    # Nothing is penalised any more: every penalty came from corrupted rug
+    # rates, and the two that could be re-tested both reversed.
+    check("no venue carries a penalty",
+          [k for k, v in config.VENUES.items() if v["conviction"] < 0], [])
+    check("and none is blocked outright",
+          [k for k, v in config.VENUES.items() if v.get("block")], [])
+
+    # A key that does not match the real dexId does nothing at all. pons-v2
+    # sat in the table for days penalising a venue that never existed.
+    check("pancakeswap is no longer penalised",
+          ev("pancakeswap").conviction.score, neutral)
+    check("nor is pons-v2-dex", ev("pons-v2-dex").conviction.score, neutral)
 
 
 def test_liquidity_floor_not_tiers():
@@ -2999,6 +2974,59 @@ def test_missing_token_is_not_an_empty_pool():
                "recorded as RUGGED" in src)
 
 
+def test_zero_price_judges_nothing():
+    """
+    ZEC was reported "GOING AGAINST YOU · down -100%" with a live pool and a
+    live price on the chart.
+
+    PnL is computed from the price, so a price of zero makes every check
+    wrong at once — the milestones, the stops and the trailing rule all fire
+    on a fabricated -100%. The earlier fixes guarded liquidity and left the
+    price alone, which is why raising confirmation counts did nothing.
+
+    Guarded in two places: _pnl returns None for a zero price, which every
+    caller already treats as "judge nothing", and the watch loop routes a
+    zero price with a live pool through the no-data path.
+    """
+    import watch, store as store_mod, chain_base, time as _t
+    print("\nzero price")
+
+    check("a real price is computed", watch._pnl(1.0, 1.5), 50.0)
+    check("a real fall is computed", watch._pnl(1.0, 0.5), -50.0)
+    check("a zero price is not a price", watch._pnl(1.0, 0.0), None)
+    check("nor is a negative one", watch._pnl(1.0, -1.0), None)
+    check("nor a missing entry", watch._pnl(0.0, 1.0), None)
+
+    now = _t.time()
+    real = chain_base.dexscreener_markets
+    try:
+        store_mod._mem["signals"] = [{
+            "ca": "0xAAA", "chain": "bsc", "name": "ZEC", "symbol": "ZEC",
+            "outcome": "pending", "entry_price": 1.0, "peak_price": 1.4,
+            "alerted_at": now - 3600, "liquidity_usd": 40000,
+            "alert_sent": True, "missed_checks": 0, "peak_pnl": 40}]
+        chain_base.dexscreener_markets = lambda cas, chain, cid: {
+            "0xAAA": TokenMarket(ca="0xAAA", chain="bsc", name="ZEC",
+                                 symbol="ZEC", price_usd=0.0,
+                                 liquidity_usd=40000, fdv=90000,
+                                 dex="pancakeswap")}
+        rows = list(store_mod._mem["signals"])
+        watch.watch_chain("bsc", rows, dry_run=True)
+        row = store_mod._mem["signals"][0]
+        check("the position is not closed", row["outcome"], "pending")
+        check("and the reading is counted as missing",
+              row["missed_checks"], 1)
+    finally:
+        chain_base.dexscreener_markets = real
+        store_mod._mem["signals"] = []
+
+    # Nothing else may compute a PnL without going through _pnl.
+    import inspect, re
+    src = inspect.getsource(watch)
+    raw = re.findall(r'\(\s*market\.price_usd\s*/\s*entry', src)
+    check("no caller divides by entry directly", raw, [])
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -3132,6 +3160,7 @@ def main():
     test_every_watch_event_has_a_header()
     test_empty_pool_needs_longer()
     test_missing_token_is_not_an_empty_pool()
+    test_zero_price_judges_nothing()
     test_missed_counter_persists()
     test_unverified_held_for_recheck()
 

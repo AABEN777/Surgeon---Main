@@ -309,6 +309,40 @@ In a week there will be clean numbers to judge it on.
 The general lesson: prefer a penalty to a veto when the evidence is thin,
 because a penalty keeps learning and a veto stops.
 
+## Venue rules rebuilt on clean data — and one never fired
+
+Two days after the false-rug fix, every venue rule was re-tested. Two were
+wrong in opposite directions.
+
+**pancakeswap carried -18** on a 21.5% win rate measured through the bug. On
+40 clean trades it wins **55.0% [39.8-69.3]** with an average peak of 59, the
+best of any venue. The penalty was suppressing the strongest cohort we have.
+
+**pons-v2 carried -30 and never fired once.** The real dex string is
+`pons-v2-dex`; the key was `pons-v2` and never matched. On clean data it wins
+46.9%, above the 38.4% baseline — so the rule was wrong as well as inert, and
+we spent two exchanges debating a penalty that was doing nothing.
+
+A rule whose key does not match the real dexId is a rule that silently does
+nothing, and there is no way to tell from the config that it is dead. Worth
+checking any lookup keyed on an external string.
+
+**What survives, from clean data:**
+
+| venue | win rate | n |
+|---|---|---|
+| uniswap-v4-base | 64.3% [51.2-75.5] | 56 |
+| raydium | 55.6% [42.4-68.0] | 54 |
+
+**Deliberately unscored:** `uniswap` at 32.1% on 680 trades is below baseline
+but is the generic pool for most of Robinhood, Base and BSC — closer to being
+the baseline than a venue with an edge. `pumpswap` and `pons-v2-dex` overlap
+it.
+
+**And the floor at 40 is vindicated.** The 40-49 band wins **43.3%** on clean
+data, the highest of any band that reaches the phone — 50-59 is 39.5% and
+60-69 is 35.6%. The recent decline is not the floor.
+
 ## Still unresolved
 
 **Trailing stops are the largest leak.** 156 exits, average peak +122%,

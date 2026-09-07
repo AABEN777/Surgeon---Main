@@ -85,7 +85,12 @@ def _pnl(entry: float, current: float) -> float | None:
     produces readings in the millions, and silently clamping them would
     record a fabricated outcome instead of admitting we do not know.
     """
-    if entry <= 0 or current < 0:
+    # A current price of exactly zero is a data fault, not a price. It
+    # produced a perfectly valid-looking -100%, which is how ZEC was reported
+    # down the full amount with a live pool and a live price on the chart.
+    # Every caller already treats None as "judge nothing", so guarding here
+    # closes it for the milestones, the stops and the trailing rule at once.
+    if entry <= 0 or current <= 0:
         return None
     pct = (current - entry) / entry * 100.0
     if pct < config.WATCH["pnl_floor_pct"] or pct > config.WATCH["pnl_ceiling_pct"]:
@@ -288,9 +293,21 @@ def watch_chain(chain: str, rows: list[dict], dry_run: bool) -> WatchResult:
             # was treated as a confirmed empty pool, and the no-data branch
             # never fired once. FLOWER was closed at -100% with its pool
             # still there.
+            # Every position check is computed from the price, so a price of
+            # zero makes all of them wrong at once — PnL reads -100% and
+            # STOP_WARN, the TP levels and trailing all fire on nonsense.
+            # ZEC was reported down -100% with a live pool and a live price
+            # because only liquidity was being guarded.
+            #
+            # The general rule, arrived at the hard way: if a field the
+            # checks depend on is missing, do not evaluate at all. Absence is
+            # not a reading.
             if not market or not market.ok:
                 needed = config.WATCH["rug_confirmations_no_data"]
                 gone_reason = "no market data"
+            elif (market.price_usd or 0) <= 0 and market.liquidity_usd > 0:
+                needed = config.WATCH["rug_confirmations_no_data"]
+                gone_reason = "price reads zero but the pool is live"
             elif market.liquidity_usd <= 0 and (market.price_usd or 0) <= 0:
                 # The API answered, and both the pool and the price read
                 # zero. Either alone is a field that DexScreener glitches on;
