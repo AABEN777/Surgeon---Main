@@ -216,7 +216,7 @@ def revisit_watchlist(social_counts: dict[str, int], dry_run: bool,
                 safety = adapter.safety(ca, market.pair_address)
                 ev = scoring.evaluate(
                     market, safety, chain,
-                    social_channels=social_counts.get(ca, 0),
+                    social_channels=social_counts.get(ca.lower(), 0),
                     smart_wallets=smartmoney.recent_buys(chain, store).get(ca, 0),
                     macro=macro,
                     hot_meta=meta_mod.hot_terms(store))
@@ -438,7 +438,11 @@ def load_social_counts() -> dict[str, int]:
     for row in rows:
         ca, ch = row.get("ca"), row.get("channel")
         if ca and ch:
-            by_ca.setdefault(ca, set()).add(ch)
+            # Keyed lowercase. Telegram carries checksummed EVM addresses in
+            # mixed case and DexScreener returns its own casing, so an exact
+            # string match never lined the two up — which is why only two
+            # tokens ever appeared in both mentions and signals.
+            by_ca.setdefault(ca.lower(), set()).add(ch)
     counts = {ca: social.weighted_count(chs) for ca, chs in by_ca.items()}
     hot = sum(1 for n in counts.values() if n >= config.VELOCITY_MIN_CHANNELS)
     if counts:
@@ -571,7 +575,7 @@ def scan_chain(chain: str, social_counts: dict[str, float],
             safety = adapter.safety(ca, market.pair_address)
             ev = scoring.evaluate(
                 market, safety, chain,
-                social_channels=social_counts.get(ca, 0),
+                social_channels=social_counts.get(ca.lower(), 0),
                 smart_wallets=smart.get(ca, 0),
                 macro=macro,
                 hot_meta=hot_meta,

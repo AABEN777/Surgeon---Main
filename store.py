@@ -97,6 +97,14 @@ class Store:
             "gte": lambda a, b: float(a or 0) >= float(b),
             "lt":  lambda a, b: float(a or 0) <  float(b),
             "lte": lambda a, b: float(a or 0) <= float(b),
+            # PostgREST's case-insensitive match, with * as its wildcard.
+            # Without it here an ilike filter was silently ignored in the
+            # in-memory store, so a lookup returned every row instead of the
+            # one it asked for.
+            "ilike": lambda a, b: (
+                str(a or "").lower() == b.lower() if "*" not in b
+                else __import__("fnmatch").fnmatch(str(a or "").lower(),
+                                                   b.lower())),
         }
         out = list(rows)
         for field, expr in params.items():
@@ -274,6 +282,12 @@ class Store:
             "insider_pct":         s.insider_pct,
             "lp_top_unlocked_pct": s.lp_top_unlocked_pct,
             "cluster_wallets":     s.cluster_wallets,
+            # Public presence. Untested on King's own trades — nothing is
+            # scored on it yet — but it cannot be tested until it is stored,
+            # which is exactly where the nine market fields were.
+            "has_twitter":         m.has_twitter,
+            "has_website":         m.has_website,
+            "has_telegram":        m.has_telegram,
             "volume_1h":           m.volume_1h,
             "volume_5m":           m.volume_5m,
             "buys_5m":             m.buys_5m,
@@ -337,6 +351,8 @@ class Store:
             "top_holder_pct": 0.0, "top10_pct": 0.0, "insider_pct": 0.0,
             "lp_locked_pct": 0.0, "lp_top_unlocked_pct": 0.0,
             "holder_count": 0, "cluster_wallets": 0,
+            "has_twitter": False, "has_website": False,
+            "has_telegram": False,
             "risk_raw": 0.0, "risk_scale": "",
             "breakdown": "preflight", "from_watchlist": False,
             "alerted_at": time.time(), "alert_sent": False,
@@ -555,9 +571,13 @@ class Store:
     def channels_for(self, ca: str, seconds: Optional[int] = None) -> list[str]:
         window = seconds or config.SOCIAL_WINDOW_SECONDS
         cutoff = time.time() - window
+        # ilike, not eq: Telegram carries checksummed EVM addresses in mixed
+        # case and DexScreener returns its own, so an exact match found
+        # nothing. Same fault as the social counts, in the path that fills
+        # the "called by" line on the alert.
         rows = self.select("mentions", {
             "select": "channel",
-            "ca": f"eq.{ca}",
+            "ca": f"ilike.{ca}",
             "seen_at": f"gte.{cutoff}",
             "limit": "100",
         })

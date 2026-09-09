@@ -53,6 +53,13 @@ class TokenMarket:
     dex: str = ""
     pair_address: str = ""
     launchpad: Optional[str] = None
+    # Public presence. The research claim is strong — tokens with a Twitter
+    # account or a website dumped at 13.3% against 40.6% without — and it
+    # cannot be tested here until it is fetched and stored, which is the same
+    # position the nine market fields were in.
+    has_twitter: bool = False
+    has_website: bool = False
+    has_telegram: bool = False
     ok: bool = True
     error: Optional[str] = None
 
@@ -623,6 +630,9 @@ def geckoterminal_market(ca: str, chain: str, network: str,
         age_hours=round(age_hours, 4), age_known=age_known,
         dex=dex, pair_address=a.get("address") or "",
         launchpad="pumpfun" if ca.lower().endswith("pump") else None,
+        # No socials here: this builds from a GeckoTerminal pool, which does
+        # not carry them. DexScreener's pair does, and that is the only place
+        # they are read.
     )
 
 
@@ -641,6 +651,29 @@ def dexscreener_market(ca: str, chain: str, chain_id: str) -> TokenMarket:
     pair = max(pairs,
                key=lambda p: safe_float(as_dict(p.get("liquidity")).get("usd")))
     return _market_from_pair(ca, chain, pair)
+
+
+def _socials_from_pair(pair: dict) -> tuple[bool, bool, bool]:
+    """
+    (twitter, website, telegram) from a DexScreener pair.
+
+    Socials live under `info`, with entries in `socials` and `websites`.
+
+    The research finding worth keeping in view: a Twitter account or a
+    website cuts the dump rate sharply — 13.3% against 40.6% without — while
+    adding Telegram raises it again. A Telegram group is coordination
+    infrastructure and disposable; a domain is a commitment. Untested on
+    King's own trades, which is why nothing is scored on it yet.
+    """
+    info = as_dict(pair.get("info"))
+    kinds = set()
+    for entry in as_list(info.get("socials")):
+        kind = str(entry.get("type") or entry.get("platform") or "").lower()
+        if kind:
+            kinds.add(kind)
+    return ("twitter" in kinds or "x" in kinds,
+            bool(as_list(info.get("websites"))),
+            "telegram" in kinds)
 
 
 def _market_from_pair(ca: str, chain: str, pair: dict) -> TokenMarket:
@@ -681,6 +714,8 @@ def _market_from_pair(ca: str, chain: str, pair: dict) -> TokenMarket:
         dex=pair.get("dexId") or "",
         pair_address=pair.get("pairAddress") or "",
         launchpad=detect_launchpad(ca, pair),
+        **dict(zip(("has_twitter", "has_website", "has_telegram"),
+                   _socials_from_pair(pair))),
     )
 
 

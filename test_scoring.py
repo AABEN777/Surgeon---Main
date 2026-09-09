@@ -3336,6 +3336,59 @@ def test_age_is_the_only_rug_separator():
     check_true("the alert states the rug rate", "rug" in out)
 
 
+def test_social_overlap():
+    """
+    Only two tokens had ever appeared in both mentions and signals, so the
+    twenty-point consensus bonus effectively never fired. Two causes, both in
+    the join rather than in the scraping.
+
+    Addresses were compared exactly. Telegram carries checksummed EVM
+    addresses in mixed case and DexScreener returns its own casing, so
+    0xAbC... never matched 0xabc...
+
+    And the mention window was two hours. Surgeon often discovers a called
+    token later than that, so the mention had already expired by the time
+    anything was scored against it.
+    """
+    import scan, store as store_mod, time as _t
+    print("\nsocial overlap")
+
+    saved = list(store_mod._mem.get("mentions", []))
+    store_mod._mem["mentions"] = []
+    s = store_mod.Store(url="", key="")
+    now = _t.time()
+    checksummed = "0xAbCdEf0123456789AbCdEf0123456789AbCdEf01"
+    s.insert("mentions", [{"ca": checksummed, "chain": "base",
+                           "channel": f"ch{i}", "seen_at": now - 600}
+                          for i in range(3)])
+
+    counts = scan.load_social_counts()
+    check_true("a checksummed mention is found by its lowercase address",
+               counts.get(checksummed.lower(), 0) > 0)
+    check_true("and by the exact string too",
+               counts.get(checksummed.lower(), 0) > 0)
+
+    # Every lookup must use the same key, or one path finds it and another
+    # does not.
+    import inspect
+    src = inspect.getsource(scan)
+    lookups = src.count("social_counts.get(")
+    lowered = src.count("social_counts.get(ca.lower()")
+    check("every social lookup lowercases the address", lookups, lowered)
+
+    # The window has to outlive the gap between a call and discovery.
+    check_true("the mention window is at least six hours",
+               config.SOCIAL_WINDOW_SECONDS >= 21_600)
+
+    # And the database lookup that fills "called by" must match too.
+    store_src = inspect.getsource(store_mod.Store.channels_for)
+    check_true("channels_for matches case-insensitively",
+               "ilike" in store_src)
+
+    # Restore whatever was there, so this test cannot alter another's result.
+    store_mod._mem["mentions"] = saved
+
+
 def main():
     print("=" * 64)
     print("SCORING TESTS")
@@ -3463,6 +3516,7 @@ def main():
     test_alert_floors_aligned()
     test_venue_effects()
     test_no_activity_is_the_strongest_signal()
+    test_social_overlap()
     test_the_read()
     test_exit_capacity()
     test_age_is_the_only_rug_separator()

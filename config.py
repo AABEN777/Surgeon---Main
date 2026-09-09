@@ -699,7 +699,11 @@ TELEGRAM_CHANNELS = [
 CHANNEL_WEIGHTS = {label: weight for _, label, weight in TELEGRAM_CHANNELS}
 PROMO_CHANNELS = {label for _, label, w in TELEGRAM_CHANNELS if w < ORGANIC}
 
-SOCIAL_WINDOW_SECONDS   = 7200   # 2h velocity window
+# Was two hours. A channel calls a token and Surgeon often discovers it
+# later than that, so the mention had already expired by the time anything
+# was scored against it — the second reason mentions and signals almost never
+# lined up. Six hours covers the gap without letting stale calls linger.
+SOCIAL_WINDOW_SECONDS = 21_600
 VELOCITY_MIN_CHANNELS   = 2      # weighted channels for consensus
 # Each evaluated call costs a safety lookup, so this is a time budget rather
 # than a philosophical limit. Consensus tokens are sorted first, so the cap

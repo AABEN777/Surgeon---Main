@@ -61,6 +61,15 @@ STRONG = {
     # 3.29h.
     "age_30_60":   Factor("30-60 minutes old",      54.3,  46, rug_rate=10.9),
     "age_1h_plus": Factor("over an hour old",       57.1,  42, rug_rate=4.8),
+
+    # Volume acceleration — (5m x 288) / 24h. Money arriving faster than the
+    # token's own recent norm. The moderate band is the sweet spot; extreme
+    # acceleration wins less and rugs at 22%.
+    "accel_good":  Factor("volume accelerating 1-6x", 54.4, 182, rug_rate=12.6),
+
+    # Market cap. Monotonic across five bands, 321 to 88 trades each.
+    "cap_300k":    Factor("cap above $300k",        51.8, 252, rug_rate=17.5),
+    "cap_100k":    Factor("cap $100k-300k",         44.1, 415, rug_rate=20.5),
 }
 
 WEAK = {
@@ -73,6 +82,20 @@ WEAK = {
     # check we have distinguishes these — only the clock does.
     "age_under_30": Factor("under 30 minutes old",  39.8,  88,
                            positive=False, rug_rate=30.7),
+
+    # Volume falling rather than rising. The worst factor measured after no
+    # activity at all: 17.9% [14.3-22.2] on 358 trades.
+    "accel_falling": Factor("volume decelerating",  17.9, 358,
+                            positive=False, rug_rate=10.6),
+
+    # Few wallets moving a lot is the wash-trading signature the research
+    # named, and it holds here: 26.8% [17.9-38.1] on 71.
+    "big_tickets":  Factor("few trades, large size", 26.8,  71,
+                           positive=False, rug_rate=22.5),
+
+    # Under $100k cap wins 32% across 943 trades, against 44-53% above it.
+    "cap_small":    Factor("cap under $100k",       32.1, 943,
+                           positive=False, rug_rate=17.7),
 }
 
 # Measured directly: how the count of strong signals maps to outcome.
@@ -115,6 +138,35 @@ def assess(market, safety, tier: str) -> tuple[list[Factor], list[Factor]]:
             strong.append(STRONG["holders_1k"])
         elif holders >= 200:
             weak.append(WEAK["holders_few"])
+
+    # -- volume acceleration ---------------------------------------
+    if market.volume_24h and market.volume_24h > 0 and market.volume_5m is not None:
+        accel = market.volume_5m * 288 / market.volume_24h
+        if accel < 1:
+            weak.append(WEAK["accel_falling"])
+        elif accel <= 6:
+            strong.append(STRONG["accel_good"])
+        # Above 6x is the bulk of everything and sits on the baseline, so it
+        # is neither claimed nor warned about.
+
+    # -- trade size ------------------------------------------------
+    total = ((market.buys_5m or 0) + (market.sells_5m or 0)
+             if market.buys_5m is not None or market.sells_5m is not None
+             else 0)
+    if total > 0 and market.volume_5m:
+        per_trade = market.volume_5m / total
+        if per_trade >= 500:
+            weak.append(WEAK["big_tickets"])
+
+    # -- market cap ------------------------------------------------
+    cap = market.market_cap or market.fdv or 0
+    if cap > 0:
+        if cap >= 300_000:
+            strong.append(STRONG["cap_300k"])
+        elif cap >= 100_000:
+            strong.append(STRONG["cap_100k"])
+        else:
+            weak.append(WEAK["cap_small"])
 
     # -- venue -----------------------------------------------------
     if _venue_wins(market.dex):
@@ -173,16 +225,32 @@ def render(market, safety, tier: str) -> str:
         return ""
 
     band = expected(len(strong))
-    if len(strong) >= 2:
-        icon, verdict = "🟢", f"{len(strong)} strong signals"
-    elif len(strong) == 1:
-        icon, verdict = "🟡", "one strong signal"
-    else:
-        icon, verdict = "⚪", "no strong signals"
+    net = len(strong) - len(weak)
 
-    lines = [f"{icon} <b>READ</b> — {verdict} · "
-             f"this shape wins {band.win_rate:.0f}% "
-             f"<i>(n={band.sample})</i>"]
+    # The icon follows the balance, not the strong count alone. A token with
+    # two strong signals and four weak ones was showing green and quoting
+    # 59%, which reads as an endorsement it has not earned.
+    if net >= 2:
+        icon = "🟢"
+    elif net >= 0:
+        icon = "🟡"
+    else:
+        icon = "🔴"
+
+    counts = f"{len(strong)} for"
+    if weak:
+        counts += f", {len(weak)} against"
+
+    # The cohort rate was measured on strong-signal count alone, so it is
+    # only quoted where the weak signals do not outweigh them — otherwise it
+    # would be a number describing a different shape.
+    if net >= 0:
+        head = (f"{icon} <b>READ</b> — {counts} · "
+                f"this shape wins {band.win_rate:.0f}% "
+                f"<i>(n={band.sample})</i>")
+    else:
+        head = f"{icon} <b>READ</b> — {counts} · more against than for"
+    lines = [head]
 
     def detail(f):
         # Rug rate is shown where it is the point of the factor — for age it

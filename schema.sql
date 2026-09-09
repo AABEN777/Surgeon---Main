@@ -206,6 +206,14 @@ alter table signals add column if not exists send_error          text;
 alter table signals add column if not exists risk_raw            double precision;
 alter table signals add column if not exists risk_scale          text;
 
+-- Public presence. Research claims tokens with a Twitter account or website
+-- dump at 13.3% against 40.6% without, and that adding Telegram raises it
+-- again. Stored so it can be tested against real outcomes rather than taken
+-- on trust.
+alter table signals add column if not exists has_twitter         boolean default false;
+alter table signals add column if not exists has_website         boolean default false;
+alter table signals add column if not exists has_telegram        boolean default false;
+
 alter table signals add column if not exists holder_count        integer;
 alter table signals add column if not exists top10_pct           double precision;
 alter table signals add column if not exists insider_pct         double precision;
