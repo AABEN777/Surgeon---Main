@@ -407,9 +407,12 @@ def main() -> int:
                                                      key=lambda x: -x[1])))
 
     measured = measure(sample)
+    known = len(_run_cache) - _fetches_this_run
     log.info("%d distinct wallets, %d tokens fetched this run "
-             "(%d already known)", len(measured), _fetches_this_run,
-             len(_run_cache) - _fetches_this_run)
+             "(%d already known)", len(measured), _fetches_this_run, known)
+    if _fetches_this_run and not known:
+        log.info("cache was empty for these — if this repeats every run, the "
+                 "token_buyers table is not persisting")
 
     # The control group, matched by chain: what else did these wallets buy?
     need = config.SMART_MONEY_DERIVED["min_winners"]
