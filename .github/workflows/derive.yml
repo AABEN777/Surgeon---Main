@@ -4,8 +4,13 @@ name: Derive
 # that keep appearing, and retires the ones that stop. Daily is often enough:
 # it learns from closed trades, which accumulate slowly.
 on:
+  # Four times a day rather than once. Each run caches 25 new tokens — the
+  # cap is about not hammering explorers that already return 403 and 429, and
+  # spreading four runs across the day is the same politeness per run at four
+  # times the accumulation. 487 winners are available to learn from; at 25 a
+  # day that is three weeks, at 100 it is five days.
   schedule:
-    - cron: "40 4 * * *"
+    - cron: "40 4,10,16,22 * * *"
   # Triggered by an external scheduler. GitHub's own cron dropped 30 times
   # in 90 days, and their docs say schedules may be delayed or dropped under
   # load — so timing lives outside GitHub while the compute stays here.
